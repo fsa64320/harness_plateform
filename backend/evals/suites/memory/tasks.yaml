@@ -1,0 +1,125 @@
+# Suite « memory » (SC-006) : chaque scénario donne une information à l'étape 1 et la redemande à l'étape 2.
+# Mêmes tâches avec et sans mémoire d'agent ; seule la dernière étape est évaluée.
+# `script` : rejeu déterministe avec le faux modèle (--provider fake).
+name: memory
+memory: true
+tasks:
+- id: canal-de-contact
+  steps:
+  - task: 'Retiens pour les prochaines fois : le client Acme veut être contacté uniquement par e-mail, jamais par téléphone.'
+  - task: Par quel canal dois-je contacter le client Acme ? Réponds en une phrase.
+  expect:
+    result_contains_any:
+    - e-mail
+    - email
+    - mail
+    - courriel
+  script:
+    with_memory:
+    - - tool_call:
+          name: write_file
+          args:
+            file_path: /memories/acme.md
+            content: 'Acme : contact par e-mail uniquement'
+      - say: C'est noté.
+    - - tool_call:
+          name: read_file
+          args:
+            file_path: /memories/acme.md
+      - say: Par e-mail.
+    without_memory:
+    - - say: C'est noté.
+    - - say: Je ne dispose pas de cette information.
+- id: code-projet
+  steps:
+  - task: 'Retiens ceci : le code projet de la société Globex est ZX-42.'
+  - task: Quel est le code projet de la société Globex ? Réponds en une phrase.
+  expect:
+    result_contains_any:
+    - ZX-42
+  script:
+    with_memory:
+    - - tool_call:
+          name: write_file
+          args:
+            file_path: /memories/globex.md
+            content: 'Globex : code projet ZX-42'
+      - say: C'est noté.
+    - - tool_call:
+          name: read_file
+          args:
+            file_path: /memories/globex.md
+      - say: Le code projet est ZX-42.
+    without_memory:
+    - - say: C'est noté.
+    - - say: Je ne dispose pas de cette information.
+- id: devise-de-facturation
+  steps:
+  - task: 'Note pour la suite : la société Initech doit être facturée en euros.'
+  - task: En quelle devise faut-il facturer la société Initech ? Réponds en une phrase.
+  expect:
+    result_contains_any:
+    - euro
+  script:
+    with_memory:
+    - - tool_call:
+          name: write_file
+          args:
+            file_path: /memories/initech.md
+            content: 'Initech : facturation en euros'
+      - say: C'est noté.
+    - - tool_call:
+          name: read_file
+          args:
+            file_path: /memories/initech.md
+      - say: En euros.
+    without_memory:
+    - - say: C'est noté.
+    - - say: Je ne dispose pas de cette information.
+- id: responsable
+  steps:
+  - task: 'À retenir : la responsable du dossier Umbrella est Camille Durand.'
+  - task: Qui est la responsable du dossier Umbrella ? Réponds en une phrase.
+  expect:
+    result_contains_any:
+    - Camille Durand
+    - Durand
+  script:
+    with_memory:
+    - - tool_call:
+          name: write_file
+          args:
+            file_path: /memories/umbrella.md
+            content: 'Umbrella : responsable Camille Durand'
+      - say: C'est noté.
+    - - tool_call:
+          name: read_file
+          args:
+            file_path: /memories/umbrella.md
+      - say: Camille Durand.
+    without_memory:
+    - - say: C'est noté.
+    - - say: Je ne dispose pas de cette information.
+- id: jour-de-livraison
+  steps:
+  - task: 'Retiens : les livraisons chez Hooli se font toujours le jeudi.'
+  - task: Quel jour livrer chez Hooli ? Réponds en une phrase.
+  expect:
+    result_contains_any:
+    - jeudi
+  script:
+    with_memory:
+    - - tool_call:
+          name: write_file
+          args:
+            file_path: /memories/hooli.md
+            content: 'Hooli : livraison le jeudi'
+      - say: C'est noté.
+    - - tool_call:
+          name: read_file
+          args:
+            file_path: /memories/hooli.md
+      - say: Le jeudi.
+    without_memory:
+    - - say: C'est noté.
+    - - say: Je ne dispose pas de cette information.

@@ -22,6 +22,16 @@ from harness.traces.memory import MemoryTraceStore
 from harness.traces.writer import RunEventSink, TraceWriter
 
 
+class ListSink:
+    """Collecte les événements émis (type, charge utile) sans passer par l'écrivain de trace."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, Any]]] = []
+
+    async def emit(self, type: str, payload: dict[str, Any]) -> None:
+        self.events.append((type, payload))
+
+
 def make_snapshot(
     *,
     allowed: Sequence[str] = ("lookup",),
@@ -128,6 +138,7 @@ def make_rig(
     hooks: Sequence[Hook] = (),
     webhook_http: httpx.AsyncClient | None = None,
     webhook_secret: str = "signing-secret",  # noqa: S107
+    backend: Any = None,
 ) -> Rig:
     snapshot = snapshot or make_snapshot()
     provider = FakeProvider(list(script))
@@ -147,11 +158,11 @@ def make_rig(
         provider,
         tools,
         checkpointer=checkpointer,
-        backend_factory=None,
+        backend_factory=(lambda _ctx: backend) if backend is not None else None,
         ctx=ctx,
         hook_runner=hook_runner,
     )
-    config = build_agent_config(snapshot, tools, ctx=ctx, hook_runner=hook_runner)
+    config = build_agent_config(snapshot, tools, ctx=ctx, hook_runner=hook_runner, backend=backend)
     return Rig(graph, ctx, store, provider, checkpointer, config, calls)
 
 

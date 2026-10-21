@@ -5,8 +5,10 @@ import { Link, Navigate, Route, Routes, useMatch } from "react-router-dom";
 import { api, ApiError, LOGIN_URL, type Schemas } from "./api/client";
 import ApprovalBadge from "./components/ApprovalBadge";
 import GroupSwitcher from "./components/GroupSwitcher";
+import AgentMemoryPage from "./pages/AgentMemoryPage";
 import AgentsPage from "./pages/AgentsPage";
 import ApprovalsPage from "./pages/ApprovalsPage";
+import GroupMemoryPage from "./pages/GroupMemoryPage";
 import RunPage from "./pages/RunPage";
 import RunsPage from "./pages/RunsPage";
 import ToolsPage from "./pages/ToolsPage";
@@ -42,7 +44,9 @@ export default function App() {
           <nav>
             <Link to={`/g/${groupId}/agents`}>Agents</Link>{" "}
             <Link to={`/g/${groupId}/runs`}>Exécutions</Link>{" "}
-            <Link to={`/g/${groupId}/tools`}>Outils</Link> <ApprovalBadge groupId={groupId} />
+            <Link to={`/g/${groupId}/tools`}>Outils</Link>{" "}
+            <Link to={`/g/${groupId}/group-memory`}>Mémoire de groupe</Link>{" "}
+            <ApprovalBadge groupId={groupId} />
           </nav>
         )}
       </header>
@@ -57,6 +61,8 @@ export default function App() {
           <Route path="/g/:groupId/runs/:runId" element={<RunPage />} />
           <Route path="/g/:groupId/approvals" element={<ApprovalsPage />} />
           <Route path="/g/:groupId/tools" element={<ToolsPage />} />
+          <Route path="/g/:groupId/agents/:agentId/memory" element={<AgentMemoryPage />} />
+          <Route path="/g/:groupId/group-memory" element={<GroupMemoryPage />} />
         </Routes>
       </main>
     </>

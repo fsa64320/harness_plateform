@@ -32,7 +32,9 @@ from harness.catalog.mcp import load_runtime_tools
 from harness.db.models.identity import Group
 from harness.db.models.runs import TERMINAL_STATUSES, ApprovalRequest, ApprovalStatus, Run, RunStatus
 from harness.db.session import group_context, platform_context
-from harness.memory.backends import SkillFileStore, build_backend
+from harness.memory import proposals
+from harness.memory import service as memory_service
+from harness.memory.backends import build_run_backend
 from harness.runtime import approvals
 from harness.runtime.builder import (
     allowed_skills,
@@ -40,6 +42,7 @@ from harness.runtime.builder import (
     compose_system_prompt,
     hooks_from_snapshot,
     make_run_context,
+    memory_section,
 )
 from harness.runtime.context import RunContext
 from harness.runtime.models import ModelProvider
@@ -258,12 +261,13 @@ class Runner:
             secrets=await self._hook_secrets(group_id, snapshot),
             known_secrets=secrets,
         )
+        sections = await self._system_sections(group_id, snapshot)
         if resume is None:
             await sink.emit(
                 "run_started",
                 {
                     **started_payload,
-                    "system_prompt": compose_system_prompt(snapshot),
+                    "system_prompt": compose_system_prompt(snapshot, sections),
                     "internal_tools": list(ctx.internal_tools),
                 },
             )
@@ -283,9 +287,11 @@ class Runner:
                 self.provider,
                 tools,
                 checkpointer=self.checkpointer,
-                backend_factory=lambda _ctx: self._backend_for(group_id, snapshot),
+                backend_factory=lambda _ctx: self._backend_for(group_id, snapshot, run_id, sink),
                 ctx=ctx,
                 hook_runner=hook_runner,
+                system_sections=sections,
+                extra_tools=self._extra_tools(group_id, snapshot, run_id, sink),
             )
             limit_iterations = snapshot["limits"]["max_iterations"]
             config = {
@@ -404,11 +410,44 @@ class Runner:
         async with self._txn(group_id) as session:
             return await credentials.hook_secrets(session, ids)
 
-    def _backend_for(self, group_id: uuid.UUID, snapshot: dict[str, Any]) -> Any:
-        """Fichiers de l'agent : espace de travail éphémère, plus `/skills/` en lecture seule."""
-        skill_ids = [uuid.UUID(t["id"]) for t in allowed_skills(snapshot)]
-        routes = {"/skills/": SkillFileStore(self._sessionmaker, group_id, skill_ids)} if skill_ids else {}
-        return build_backend(routes)  # type: ignore[arg-type]
+    def _backend_for(self, group_id: uuid.UUID, snapshot: dict[str, Any], run_id: uuid.UUID, sink: Any) -> Any:
+        """Fichiers de l'agent : espace de travail éphémère, `/memories/`, `/group-memory/` (lecture seule)
+        et `/skills/` (lecture seule), selon la configuration figée de l'agent."""
+        return build_run_backend(
+            self._sessionmaker,
+            group_id=group_id,
+            agent_id=uuid.UUID(snapshot["agent_id"]),
+            run_id=run_id,
+            sink=sink,
+            agent_memory=bool(snapshot.get("agent_memory_enabled")),
+            group_memory=bool(snapshot.get("group_memory_enabled")),
+            skill_tool_ids=[uuid.UUID(t["id"]) for t in allowed_skills(snapshot)],
+        )
+
+    def _extra_tools(self, group_id: uuid.UUID, snapshot: dict[str, Any], run_id: uuid.UUID, sink: Any) -> list[Any]:
+        if not snapshot.get("group_memory_enabled"):
+            return []
+        return [
+            proposals.make_propose_tool(
+                self._sessionmaker, group_id=group_id, agent_id=uuid.UUID(snapshot["agent_id"]), run_id=run_id, sink=sink
+            )
+        ]
+
+    async def _system_sections(self, group_id: uuid.UUID, snapshot: dict[str, Any]) -> list[str]:
+        """Index de la mémoire (chemins seulement) ajouté au prompt système."""
+        agent_paths: list[str] = []
+        group_paths: list[str] = []
+        if snapshot.get("agent_memory_enabled") or snapshot.get("group_memory_enabled"):
+            async with self._txn(group_id) as session:
+                if snapshot.get("agent_memory_enabled"):
+                    entries = await memory_service.list_entries(
+                        session, scope="agent", agent_id=uuid.UUID(snapshot["agent_id"])
+                    )
+                    agent_paths = [e.path for e in entries]
+                if snapshot.get("group_memory_enabled"):
+                    group_paths = [e.path for e in await memory_service.list_entries(session, scope="group")]
+        section = memory_section(snapshot, agent_paths, group_paths)
+        return [section] if section else []
 
     @staticmethod
     def _retired_warnings(snapshot: dict[str, Any]) -> list[str]:
@@ -685,6 +724,14 @@ class Runner:
             for run_id in ids:
                 await self._end_run(group_id, run_id, RunStatus.INTERRUPTED, "platform_restart", None)
 
+    async def expire_overdue_proposals(self) -> None:
+        """Les propositions de mémoire de groupe jamais validées expirent (30 jours par défaut)."""
+        for group_id in await self._group_ids():
+            async with self._txn(group_id) as session:
+                group = await session.get(Group, group_id)
+                if group is not None:
+                    await proposals.expire_overdue(session, group)
+
     # --- tâche périodique -----------------------------------------------------------------
 
     def start_background(self) -> None:
@@ -696,8 +743,9 @@ class Runner:
             await asyncio.sleep(self._check_interval)
             try:
                 await self.expire_overdue_approvals()
+                await self.expire_overdue_proposals()
             except Exception:
-                log.exception("approval_expiry_failed")
+                log.exception("expiry_failed")
 
     async def shutdown(self) -> None:
         """Arrêt propre du processus : les exécutions en cours sont laissées en l'état (elles seront

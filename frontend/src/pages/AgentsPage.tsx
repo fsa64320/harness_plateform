@@ -121,6 +121,7 @@ export default function AgentsPage() {
               <button type="button" onClick={() => setEditing(agent)}>
                 Modifier
               </button>{" "}
+              <Link to={`/g/${groupId}/agents/${agent.id}/memory`}>Mémoire</Link>{" "}
               <button type="button" onClick={() => remove.mutate(agent.id ?? "")}>
                 Supprimer
               </button>

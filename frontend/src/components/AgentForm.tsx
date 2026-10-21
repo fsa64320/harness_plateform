@@ -30,6 +30,8 @@ export default function AgentForm({
   const [modelId, setModelId] = useState(initial?.model_id ?? "qwen3");
   const [allowed, setAllowed] = useState<string[]>(initial?.allowed_tool_ids ?? []);
   const [subagents, setSubagents] = useState(initial?.subagents_enabled ?? false);
+  const [agentMemory, setAgentMemory] = useState(initial?.agent_memory_enabled ?? true);
+  const [groupMemory, setGroupMemory] = useState(initial?.group_memory_enabled ?? false);
   const [maxIterations, setMaxIterations] = useState(initial?.limits?.max_iterations ?? 10);
   const [maxDuration, setMaxDuration] = useState(initial?.limits?.max_duration_seconds ?? 300);
   const [maxTokens, setMaxTokens] = useState(initial?.limits?.max_tokens ?? 50000);
@@ -47,8 +49,8 @@ export default function AgentForm({
       model_id: modelId,
       allowed_tool_ids: allowed,
       subagents_enabled: subagents,
-      agent_memory_enabled: initial?.agent_memory_enabled ?? true,
-      group_memory_enabled: initial?.group_memory_enabled ?? false,
+      agent_memory_enabled: agentMemory,
+      group_memory_enabled: groupMemory,
       limits: {
         max_iterations: maxIterations,
         max_duration_seconds: maxDuration,
@@ -109,6 +111,25 @@ export default function AgentForm({
         />{" "}
         Autoriser les sous-agents
       </label>
+      <fieldset>
+        <legend>Mémoire</legend>
+        <label>
+          <input
+            type="checkbox"
+            checked={agentMemory}
+            onChange={(e) => setAgentMemory(e.target.checked)}
+          />{" "}
+          Mémoire d'agent (retient d'une exécution à l'autre)
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={groupMemory}
+            onChange={(e) => setGroupMemory(e.target.checked)}
+          />{" "}
+          Mémoire de groupe (lecture, et propositions soumises à validation)
+        </label>
+      </fieldset>
       <fieldset>
         <legend>Limites d'exécution</legend>
         <label>

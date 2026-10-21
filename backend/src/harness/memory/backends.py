@@ -8,7 +8,9 @@ adossé à un `FileStore`. La lecture seule est imposée par le backend lui-mêm
 from __future__ import annotations
 
 import base64
+import contextlib
 import uuid
+from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
 from deepagents.backends import CompositeBackend, StateBackend
@@ -39,7 +41,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from harness.db.models.catalog import Tool, ToolKind, ToolStatus
+from harness.db.models.memory import MemoryScope
 from harness.db.session import group_context
+from harness.memory import service as memory
+from harness.memory.service import Actor
+from harness.runtime.context import EventSink
 
 READ_ONLY_ERROR = "Erreur : ce dossier est en lecture seule, aucune modification n'est possible."
 
@@ -56,6 +62,14 @@ class FileStore(Protocol):
         ...
 
     async def remove(self, path: str) -> str | None: ...
+
+
+class _Observed(Protocol):
+    """Capacités facultatives d'un magasin qui suit les lectures de l'agent (mémoire)."""
+
+    async def note_read(self, path: str) -> None: ...
+
+    async def precheck_edit(self, path: str, old: str, new: str) -> str | None: ...
 
 
 class SqlBackend(BackendProtocol):
@@ -119,6 +133,8 @@ class SqlBackend(BackendProtocol):
         data = (await self._store.load()).get(file_path)
         if data is None:
             return ReadResult(error=f"Fichier introuvable : « {file_path} »")
+        if (note := getattr(self._store, "note_read", None)) is not None:
+            await note(file_path)
         return slice_read_response(data, offset, limit)
 
     async def awrite(self, file_path: str, content: str) -> WriteResult:
@@ -130,6 +146,9 @@ class SqlBackend(BackendProtocol):
     async def aedit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:  # noqa: FBT001, FBT002
         if self.read_only:
             return EditResult(error=READ_ONLY_ERROR)
+        if (precheck := getattr(self._store, "precheck_edit", None)) is not None:
+            if (conflict := await precheck(file_path, old_string, new_string)) is not None:
+                return EditResult(error=conflict)
         data = (await self._store.load()).get(file_path)
         if data is None:
             return EditResult(error=f"Fichier introuvable : « {file_path} »")
@@ -227,6 +246,172 @@ class SkillFileStore:
 
     async def remove(self, path: str) -> str | None:
         return READ_ONLY_ERROR
+
+
+class MemoryFileStore:
+    """Entrées de mémoire d'une portée, vues comme des fichiers `/<chemin>`.
+
+    - `agent` : mémoire propre à l'agent courant, en lecture et écriture ; l'agent ne voit jamais celle
+      d'un autre agent (filtre par `agent_id`, puis RLS par groupe) ;
+    - `group` : mémoire de groupe, en lecture seule (FR-017a : seules les propositions validées l'alimentent).
+
+    Chaque lecture de l'agent est mémorisée (`note_read`) : l'écriture qui suit est conditionnée à la
+    version lue, de sorte qu'une modification faite entre-temps par une autre exécution produise un
+    conflit visible plutôt qu'un écrasement silencieux."""
+
+    def __init__(
+        self,
+        sessionmaker: async_sessionmaker[AsyncSession],
+        *,
+        group_id: uuid.UUID,
+        scope: str,
+        agent_id: uuid.UUID | None,
+        run_id: uuid.UUID | None,
+        sink: EventSink | None,
+        read_only: bool,
+    ) -> None:
+        self._sessionmaker = sessionmaker
+        self._group_id, self._scope, self._agent_id = group_id, scope, agent_id
+        self._run_id, self._sink = run_id, sink
+        self.read_only = read_only
+        self._versions: dict[str, int] = {}
+        self._seen: dict[str, int] = {}
+
+    @contextlib.asynccontextmanager
+    async def _txn(self) -> AsyncIterator[AsyncSession]:
+        async with self._sessionmaker() as session, session.begin():
+            await group_context(session, self._group_id)
+            yield session
+
+    async def _emit(self, type_: str, payload: dict[str, Any]) -> None:
+        if self._sink is not None:
+            await self._sink.emit(type_, payload)
+
+    @property
+    def _actor(self) -> Actor:
+        return Actor("agent", self._agent_id)
+
+    async def load(self) -> dict[str, FileData]:
+        async with self._txn() as session:
+            entries = await memory.list_entries(session, scope=self._scope, agent_id=self._agent_id)
+        self._versions = {e.path: e.version for e in entries}
+        return {
+            f"/{e.path}": {
+                "content": e.content,
+                "encoding": "utf-8",
+                "created_at": e.created_at.isoformat(),
+                "modified_at": e.updated_at.isoformat(),
+            }
+            for e in entries
+        }
+
+    @staticmethod
+    def _key(path: str) -> str:
+        return memory.normalize_path(path)
+
+    async def note_read(self, path: str) -> None:
+        key = self._key(path)
+        version = self._versions.get(key)
+        if version is None:
+            return
+        self._seen[key] = version
+        await self._emit("memory_read", {"scope": self._scope, "path": key, "version": version})
+
+    async def _conflict_message(self, key: str, expected: int, actual: int) -> str:
+        await self._emit("memory_conflict", {"path": key, "expected_version": expected, "actual_version": actual})
+        return (
+            f"Conflit : « {key} » a été modifiée par une autre exécution (version lue {expected}, version "
+            f"actuelle {actual}). Relis le fichier puis réessaie ; ta tentative est conservée dans l'historique."
+        )
+
+    async def precheck_edit(self, path: str, old: str, new: str) -> str | None:
+        try:
+            key = self._key(path)
+        except memory.MemoryPathInvalid as exc:
+            return str(exc)
+        expected = self._seen.get(key)
+        if expected is None:
+            return None
+        async with self._txn() as session:
+            entry = await memory.find_entry(session, scope=self._scope, agent_id=self._agent_id, path=key, lock=True)
+            if entry is None or entry.deleted_at is not None or entry.version == expected:
+                return None
+            await memory.record_conflict(session, entry, self._actor, f"edit_file : « {old} » → « {new} »", expected)
+            actual = entry.version
+        return await self._conflict_message(key, expected, actual)
+
+    async def save(self, path: str, content: str) -> str | None:
+        if self.read_only:
+            return READ_ONLY_ERROR
+        try:
+            key = self._key(path)
+        except memory.MemoryPathInvalid as exc:
+            return str(exc)
+        expected = self._seen.get(key)
+        async with self._txn() as session:
+            outcome = await memory.write_entry(
+                session, group_id=self._group_id, scope=self._scope, agent_id=self._agent_id, path=key,
+                content=content, expected_version=expected, actor=self._actor, source_run_id=self._run_id,
+            )
+        if outcome.conflict:
+            return await self._conflict_message(key, outcome.expected_version or 0, outcome.actual_version or 0)
+        self._seen[key] = self._versions[key] = outcome.entry.version
+        await self._emit(
+            "memory_written",
+            {"scope": self._scope, "path": key, "version": outcome.entry.version, "change_type": outcome.change_type},
+        )
+        return None
+
+    async def remove(self, path: str) -> str | None:
+        if self.read_only:
+            return READ_ONLY_ERROR
+        try:
+            key = self._key(path.rstrip("/"))
+        except memory.MemoryPathInvalid as exc:
+            return str(exc)
+        removed: list[Any] = []
+        async with self._txn() as session:
+            for entry in await memory.list_entries(session, scope=self._scope, agent_id=self._agent_id):
+                if entry.path == key or entry.path.startswith(key + "/"):
+                    removed.append(await memory.delete_entry(session, entry, self._actor))
+        if not removed:
+            return f"Fichier introuvable : « {path} »"
+        for entry in removed:
+            self._seen.pop(entry.path, None)
+            await self._emit(
+                "memory_written",
+                {"scope": self._scope, "path": entry.path, "version": entry.version, "change_type": "delete"},
+            )
+        return None
+
+
+def build_run_backend(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    *,
+    group_id: uuid.UUID,
+    agent_id: uuid.UUID,
+    run_id: uuid.UUID | None,
+    sink: EventSink | None,
+    agent_memory: bool,
+    group_memory: bool,
+    skill_tool_ids: list[uuid.UUID],
+) -> BackendProtocol | None:
+    """Fichiers vus par l'agent : espace de travail éphémère par défaut, et une route par source —
+    `/memories/` (lecture et écriture), `/group-memory/` et `/skills/` (lecture seule)."""
+    routes: dict[str, FileStore] = {}
+    if agent_memory:
+        routes["/memories/"] = MemoryFileStore(
+            sessionmaker, group_id=group_id, scope=MemoryScope.AGENT, agent_id=agent_id, run_id=run_id, sink=sink,
+            read_only=False,
+        )
+    if group_memory:
+        routes["/group-memory/"] = MemoryFileStore(
+            sessionmaker, group_id=group_id, scope=MemoryScope.GROUP, agent_id=None, run_id=run_id, sink=sink,
+            read_only=True,
+        )
+    if skill_tool_ids:
+        routes["/skills/"] = SkillFileStore(sessionmaker, group_id, skill_tool_ids)
+    return build_backend(routes)
 
 
 def build_backend(routes: dict[str, FileStore]) -> BackendProtocol | None:

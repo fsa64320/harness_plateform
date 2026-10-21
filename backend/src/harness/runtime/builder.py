@@ -98,7 +98,34 @@ def hooks_from_snapshot(snapshot: dict[str, Any]) -> list[Hook]:
 
 
 def effective_internal_tools(snapshot: dict[str, Any]) -> tuple[str, ...]:
-    return (*INTERNAL_TOOLS, "task") if snapshot.get("subagents_enabled") else INTERNAL_TOOLS
+    """Outils internes effectifs (FR-006a) ; `propose_group_memory` n'existe que si la mémoire de groupe
+    est activée pour l'agent."""
+    tools = (*INTERNAL_TOOLS, *(("task",) if snapshot.get("subagents_enabled") else ()))
+    return (*tools, "propose_group_memory") if snapshot.get("group_memory_enabled") else tools
+
+
+def memory_section(snapshot: dict[str, Any], agent_paths: Sequence[str], group_paths: Sequence[str]) -> str | None:
+    """Mode d'emploi de la mémoire, avec l'index de ses fichiers. Les contenus restent des données lues
+    à la demande (et encadrées comme telles) : jamais copiées dans les instructions."""
+    lines: list[str] = []
+    if snapshot.get("agent_memory_enabled"):
+        listing = ", ".join(f"/memories/{p}" for p in agent_paths) if agent_paths else "aucun fichier pour l'instant"
+        lines += [
+            f"Ta mémoire d'agent persiste d'une exécution à l'autre : c'est le dossier /memories/ ({listing}).",
+            "- Quand on te demande de retenir, noter ou garder une information, ou quand tu apprends un fait "
+            "durable (préférence, décision, identifiant, contact), écris-le AVANT de répondre avec write_file "
+            "dans /memories/<sujet>.md. Répondre « noté » sans écrire le fichier ne retient rien.",
+            "- Avant de répondre à une question sur un client, un projet, une personne ou une décision, "
+            "consulte ta mémoire : lis les fichiers pertinents avec read_file (ou ls /memories/).",
+        ]
+    if snapshot.get("group_memory_enabled"):
+        listing = ", ".join(f"/group-memory/{p}" for p in group_paths) if group_paths else "aucun fichier pour l'instant"
+        lines += [
+            f"La mémoire de groupe, partagée et en lecture seule : /group-memory/ ({listing}).",
+            "- Pour y ajouter un fait commun à tout le groupe, utilise propose_group_memory : une personne "
+            "habilitée devra le valider avant qu'il n'y entre.",
+        ]
+    return "## Mémoire\n" + "\n".join(lines) if lines else None
 
 
 def allowed_skills(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
@@ -193,10 +220,12 @@ def build_agent_config(
     backend: BackendProtocol | None = None,
     hook_runner: HookRunner | None = None,
     system_sections: Sequence[str] = (),
+    extra_tools: Sequence[BaseTool] = (),
 ) -> AgentConfig:
     operations = resolve_allowed_operations(snapshot)
     allowed_names = {o.bound_name for o in operations}
     tools = [t for t in mcp_tools if t.name in allowed_names]  # jamais lié : tout autre outil MCP
+    tools += [t for t in extra_tools if t.name in ctx.internal_tools]
     interrupt_on = compute_interrupt_on(operations)
     system_prompt = compose_system_prompt(snapshot, system_sections)
 
@@ -234,6 +263,7 @@ def build_agent(
     ctx: RunContext,
     hook_runner: HookRunner | None = None,
     system_sections: Sequence[str] = (),
+    extra_tools: Sequence[BaseTool] = (),
 ) -> Any:
     """Agent compilé, prêt à être invoqué avec un `thread_id`."""
     backend = backend_factory(ctx) if backend_factory else None
@@ -244,6 +274,7 @@ def build_agent(
         backend=backend,
         hook_runner=hook_runner,
         system_sections=system_sections,
+        extra_tools=extra_tools,
     )
     return create_deep_agent(
         model=provider.get_chat_model(snapshot["model_id"]),

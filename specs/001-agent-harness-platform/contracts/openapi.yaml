@@ -592,6 +592,7 @@ components:
       properties:
         version: { type: integer }
         previous_content: { type: [string, "null"] }
+        new_content: { type: [string, "null"], description: "Contenu écrit ; pour un conflit, l'écriture refusée" }
         change_type: { type: string, enum: [create, update, delete, conflict] }
         changed_by: { type: string }
         changed_at: { type: string, format: date-time }
@@ -599,8 +600,8 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
-        run_id: { type: string, format: uuid }
-        agent_id: { type: string, format: uuid }
+        run_id: { type: [string, "null"], format: uuid, description: "Nul si l'exécution a été supprimée" }
+        agent_id: { type: [string, "null"], format: uuid, description: "Nul si l'agent a été supprimé" }
         proposed_path: { type: string }
         proposed_content: { type: string }
         status: { type: string, enum: [pending, accepted, rejected, expired] }

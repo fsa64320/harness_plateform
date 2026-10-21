@@ -25,6 +25,9 @@ class Base(_Declarative):
     """Toutes les tables métier ont `id` (UUID), `created_at` et `updated_at`."""
 
     __abstract__ = True
+    # `updated_at`/`created_at` sont calculés par la base : on les relit à l'écriture (pas de chargement
+    # paresseux, interdit en asynchrone).
+    __mapper_args__ = {"eager_defaults": True}  # noqa: RUF012
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     created_at: Mapped[dt.datetime] = mapped_column(

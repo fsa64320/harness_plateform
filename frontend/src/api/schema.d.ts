@@ -1646,6 +1646,8 @@ export interface components {
         MemoryRevision: {
             version?: number;
             previous_content?: string | null;
+            /** @description Contenu écrit ; pour un conflit, l'écriture refusée */
+            new_content?: string | null;
             /** @enum {string} */
             change_type?: "create" | "update" | "delete" | "conflict";
             changed_by?: string;
@@ -1655,10 +1657,16 @@ export interface components {
         GroupMemoryProposal: {
             /** Format: uuid */
             id?: string;
-            /** Format: uuid */
-            run_id?: string;
-            /** Format: uuid */
-            agent_id?: string;
+            /**
+             * Format: uuid
+             * @description Nul si l'exécution a été supprimée
+             */
+            run_id?: string | null;
+            /**
+             * Format: uuid
+             * @description Nul si l'agent a été supprimé
+             */
+            agent_id?: string | null;
             proposed_path?: string;
             proposed_content?: string;
             /** @enum {string} */
