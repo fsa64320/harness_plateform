@@ -1,0 +1,33 @@
+# IdP OIDC local de test uniquement (utilisateurs statiques). En production : IdP de l'organisation.
+issuer: http://localhost:5556/dex
+storage:
+  type: memory
+web:
+  http: 0.0.0.0:5556
+oauth2:
+  skipApprovalScreen: true
+enablePasswordDB: true
+staticClients:
+  - id: harness
+    name: Harness
+    redirectURIs:
+      - http://localhost:8000/api/v1/auth/callback
+    secretEnv: OIDC_CLIENT_SECRET
+staticPasswords:
+  # hash bcrypt du mot de passe de test « password » (utilisateurs de test uniquement)
+  - email: alice@example.test
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzT3vOPUJe8pBQGGJcNW"
+    username: alice
+    userID: "00000000-0000-0000-0000-0000000000a1"
+  - email: bob@example.test
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzT3vOPUJe8pBQGGJcNW"
+    username: bob
+    userID: "00000000-0000-0000-0000-0000000000b2"
+  - email: carol@example.test
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzT3vOPUJe8pBQGGJcNW"
+    username: carol
+    userID: "00000000-0000-0000-0000-0000000000c3"
+  - email: dan@example.test
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzT3vOPUJe8pBQGGJcNW"
+    username: dan
+    userID: "00000000-0000-0000-0000-0000000000d4"
