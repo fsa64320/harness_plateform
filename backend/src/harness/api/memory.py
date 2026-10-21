@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from harness.agents import service as agents
-from harness.auth.permissions import GroupAccess, GroupMemberDep, require_roles
+from harness.auth.permissions import GroupAccess, HumanMemberDep, require_roles
 from harness.db.models.agents import Agent
 from harness.db.models.memory import GroupMemoryProposal, MemoryEntry, MemoryRevision, MemoryScope
 from harness.db.session import SessionDep
@@ -105,7 +105,7 @@ async def _entry(session: SessionDep, entry_id: uuid.UUID) -> MemoryEntry:
 
 
 @router.get("/agents/{agent_id}/memory")
-async def agent_memory(agent_id: uuid.UUID, access: GroupMemberDep, session: SessionDep) -> list[dict[str, Any]]:
+async def agent_memory(agent_id: uuid.UUID, access: HumanMemberDep, session: SessionDep) -> list[dict[str, Any]]:
     try:
         await agents.get_agent(session, agent_id)
     except agents.AgentNotFound as exc:
@@ -114,7 +114,7 @@ async def agent_memory(agent_id: uuid.UUID, access: GroupMemberDep, session: Ses
 
 
 @router.get("/group-memory")
-async def group_memory(access: GroupMemberDep, session: SessionDep) -> list[dict[str, Any]]:
+async def group_memory(access: HumanMemberDep, session: SessionDep) -> list[dict[str, Any]]:
     return [entry_out(e) for e in await memory.list_entries(session, scope=MemoryScope.GROUP)]
 
 
@@ -135,7 +135,7 @@ async def add_group_entry(body: EntryInput, access: ManagerDep, session: Session
 
 
 @router.put("/memory/{entry_id}")
-async def update_entry(entry_id: uuid.UUID, body: EntryUpdate, access: GroupMemberDep, session: SessionDep) -> Any:
+async def update_entry(entry_id: uuid.UUID, body: EntryUpdate, access: HumanMemberDep, session: SessionDep) -> Any:
     entry = await _entry(session, entry_id)
     await _authorize_edit(session, entry, access)
     outcome = await memory.write_entry(
@@ -157,7 +157,7 @@ async def update_entry(entry_id: uuid.UUID, body: EntryUpdate, access: GroupMemb
 
 
 @router.delete("/memory/{entry_id}", status_code=204)
-async def delete_entry(entry_id: uuid.UUID, access: GroupMemberDep, session: SessionDep) -> Response:
+async def delete_entry(entry_id: uuid.UUID, access: HumanMemberDep, session: SessionDep) -> Response:
     entry = await _entry(session, entry_id)
     await _authorize_edit(session, entry, access)
     await memory.delete_entry(session, entry, Actor("person", access.principal.id))
@@ -165,14 +165,18 @@ async def delete_entry(entry_id: uuid.UUID, access: GroupMemberDep, session: Ses
 
 
 @router.get("/memory/{entry_id}/revisions")
-async def revisions(entry_id: uuid.UUID, access: GroupMemberDep, session: SessionDep) -> list[dict[str, Any]]:
-    # l'historique reste lisible après une suppression
+async def revisions(entry_id: uuid.UUID, access: HumanMemberDep, session: SessionDep) -> list[dict[str, Any]]:
+    # l'historique reste lisible après une suppression, mais une entrée d'un autre groupe est introuvable
+    try:
+        await memory.get_entry(session, entry_id, include_deleted=True)
+    except memory.MemoryEntryNotFound as exc:
+        raise HTTPException(404, "Entrée introuvable") from exc
     return [revision_out(r) for r in await memory.list_revisions(session, entry_id)]
 
 
 @router.get("/group-memory/proposals")
 async def list_proposals(
-    access: GroupMemberDep,
+    access: HumanMemberDep,
     session: SessionDep,
     status: Annotated[Literal["pending", "accepted", "rejected", "expired"] | None, Query()] = None,
 ) -> list[dict[str, Any]]:

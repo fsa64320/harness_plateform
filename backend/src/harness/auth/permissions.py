@@ -131,10 +131,21 @@ async def group_member(group_id: uuid.UUID, principal: PrincipalDep, session: Se
 GroupMemberDep = Annotated[GroupAccess, Depends(group_member)]
 
 
+async def human_member(access: GroupMemberDep) -> GroupAccess:
+    """Comme `group_member`, mais refuse un compte de service : il ne lance que des agents et suit ses
+    propres exécutions (FR-002, FR-002b), il n'administre ni ne consulte rien d'autre."""
+    if access.is_service_account:
+        raise HTTPException(status_code=403, detail="Non disponible pour un compte de service")
+    return access
+
+
+HumanMemberDep = Annotated[GroupAccess, Depends(human_member)]
+
+
 def require_roles(*roles: str) -> Callable[..., Awaitable[GroupAccess]]:
     """Dépendance qui exige au moins un des rôles (le rôle `member` suffit à tout membre actif)."""
 
-    async def dependency(access: GroupMemberDep) -> GroupAccess:
+    async def dependency(access: HumanMemberDep) -> GroupAccess:
         if not access.roles.intersection(roles):
             raise HTTPException(status_code=403, detail="Rôle insuffisant")
         return access

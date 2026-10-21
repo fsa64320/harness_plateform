@@ -7,43 +7,15 @@ import asyncio
 import sys
 import uuid
 
-from sqlalchemy import select
-
 from harness.config import get_settings
 from harness.db import session as db_session
-from harness.db.models.identity import Group, Membership, Person
-from harness.db.session import group_context, platform_context
-from harness.groups.audit import record_admin_action
+from harness.groups import service as groups
 
 
 async def create_group(name: str, admin_emails: list[str]) -> uuid.UUID:
     """Crée le groupe et ses premiers administrateurs, et consigne l'action (FR-022a, FR-024)."""
     async with db_session.get_sessionmaker()() as session, session.begin():
-        await platform_context(session)
-        group = Group(name=name)
-        session.add(group)
-        await session.flush()
-        await group_context(session, group.id)
-        for email in admin_emails:
-            person = (
-                await session.execute(select(Person).where(Person.email == email))
-            ).scalar_one_or_none()
-            if person is None:
-                person = Person(email=email, display_name=email.split("@")[0])
-                session.add(person)
-                await session.flush()
-            session.add(
-                Membership(group_id=group.id, person_id=person.id, roles=["admin", "member"])
-            )
-        await record_admin_action(
-            session,
-            group_id=group.id,
-            actor_id=None,
-            action="group.create",
-            target_type="group",
-            target_id=group.id,
-            details={"name": name, "admins": admin_emails, "via": "cli"},
-        )
+        group = await groups.create_group(session, name=name, admin_emails=admin_emails, actor_id=None, via="cli")
         return group.id
 
 

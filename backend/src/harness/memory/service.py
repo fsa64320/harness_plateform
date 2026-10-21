@@ -169,10 +169,11 @@ async def list_entries(
     return list((await session.execute(query.order_by(MemoryEntry.path))).scalars())
 
 
-async def get_entry(session: AsyncSession, entry_id: uuid.UUID) -> MemoryEntry:
-    entry = (
-        await session.execute(select(MemoryEntry).where(MemoryEntry.id == entry_id, MemoryEntry.deleted_at.is_(None)))
-    ).scalar_one_or_none()
+async def get_entry(session: AsyncSession, entry_id: uuid.UUID, *, include_deleted: bool = False) -> MemoryEntry:
+    query = select(MemoryEntry).where(MemoryEntry.id == entry_id)
+    if not include_deleted:
+        query = query.where(MemoryEntry.deleted_at.is_(None))
+    entry = (await session.execute(query)).scalar_one_or_none()
     if entry is None:
         raise MemoryEntryNotFound(str(entry_id))
     return entry

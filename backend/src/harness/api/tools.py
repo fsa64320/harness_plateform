@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from harness.auth.permissions import GroupAccess, GroupMemberDep, require_roles
+from harness.auth.permissions import GroupAccess, HumanMemberDep, require_roles
 from harness.catalog import mcp, skills
 from harness.catalog import service as catalog
 from harness.catalog.credentials import store_credential
@@ -108,7 +108,7 @@ async def tool_out(session: SessionDep, tool: Tool) -> dict[str, Any]:
 
 @router.get("")
 async def list_tools(
-    access: GroupMemberDep, session: SessionDep, kind: Annotated[ToolKind | None, Query()] = None
+    access: HumanMemberDep, session: SessionDep, kind: Annotated[ToolKind | None, Query()] = None
 ) -> list[dict[str, Any]]:
     query = select(Tool).where(Tool.status == "active").order_by(Tool.name)
     if kind:
@@ -212,7 +212,7 @@ async def create_tool(body: ToolCreate, access: ToolManagerDep, session: Session
 
 
 @router.get("/{tool_id}")
-async def get_tool(tool_id: uuid.UUID, access: GroupMemberDep, session: SessionDep) -> dict[str, Any]:
+async def get_tool(tool_id: uuid.UUID, access: HumanMemberDep, session: SessionDep) -> dict[str, Any]:
     try:
         return await tool_out(session, await catalog.get_tool(session, tool_id))
     except catalog.ToolNotFound as exc:

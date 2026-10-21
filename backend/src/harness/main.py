@@ -15,7 +15,7 @@ from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
 
 from harness import config
-from harness.api import agents, approvals, me, memory, runs, tools
+from harness.api import admin, agents, approvals, audit, me, members, memory, runs, service_accounts, tools
 from harness.auth import oidc
 from harness.db import session as db_session
 from harness.runtime.models import ModelProvider, OllamaProvider
@@ -138,6 +138,10 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
     api.include_router(runs.router)
     api.include_router(approvals.router)
     api.include_router(memory.router)
+    api.include_router(admin.router)
+    api.include_router(members.router)
+    api.include_router(service_accounts.router)
+    api.include_router(audit.router)
     api.include_router(oidc.router)
     app.include_router(api)
 

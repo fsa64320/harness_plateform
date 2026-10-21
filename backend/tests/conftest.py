@@ -123,8 +123,13 @@ async def session(migrated_db: dict[str, str], clean_db: None) -> AsyncIterator[
 def install_auth_override(app: FastAPI) -> None:
     """Remplace `current_principal` : l'identité vient de l'en-tête `X-Test-Person` (id de Person)."""
     async def fake_principal(request: Request, session: SessionDep) -> Principal:
+        authorization = request.headers.get("authorization", "")
+        if authorization.lower().startswith("bearer "):  # jetons de comptes de service : vraie authentification
+            from harness.auth.service_accounts import authenticate_token
+
+            return await authenticate_token(session, authorization[7:].strip())
         raw = request.headers.get("x-test-person")
-        if raw is None:
+        if not raw:
             raise HTTPException(status_code=401, detail="unauthenticated")
         person = await session.get(Person, uuid.UUID(raw))
         if person is None:

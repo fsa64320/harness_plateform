@@ -7,6 +7,9 @@ import ApprovalBadge from "./components/ApprovalBadge";
 import GroupSwitcher from "./components/GroupSwitcher";
 import AgentMemoryPage from "./pages/AgentMemoryPage";
 import AgentsPage from "./pages/AgentsPage";
+import AuditPage from "./pages/AuditPage";
+import GroupAdminPage from "./pages/GroupAdminPage";
+import PlatformAdminPage from "./pages/PlatformAdminPage";
 import ApprovalsPage from "./pages/ApprovalsPage";
 import GroupMemoryPage from "./pages/GroupMemoryPage";
 import RunPage from "./pages/RunPage";
@@ -34,6 +37,7 @@ export default function App() {
 
   const memberships = me.memberships ?? [];
   const first = memberships[0];
+  const isAdmin = (memberships.find((m) => m.group_id === groupId)?.roles ?? []).includes("admin");
 
   return (
     <>
@@ -45,7 +49,14 @@ export default function App() {
             <Link to={`/g/${groupId}/agents`}>Agents</Link>{" "}
             <Link to={`/g/${groupId}/runs`}>Exécutions</Link>{" "}
             <Link to={`/g/${groupId}/tools`}>Outils</Link>{" "}
-            <Link to={`/g/${groupId}/group-memory`}>Mémoire de groupe</Link>{" "}
+            <Link to={`/g/${groupId}/group-memory`}>Mémoire de groupe</Link>
+            {isAdmin && (
+              <>
+                {" "}
+                <Link to={`/g/${groupId}/admin`}>Administration</Link>{" "}
+                <Link to={`/g/${groupId}/audit`}>Journal</Link>
+              </>
+            )}{" "}
             <ApprovalBadge groupId={groupId} />
           </nav>
         )}
@@ -61,6 +72,9 @@ export default function App() {
           <Route path="/g/:groupId/runs/:runId" element={<RunPage />} />
           <Route path="/g/:groupId/approvals" element={<ApprovalsPage />} />
           <Route path="/g/:groupId/tools" element={<ToolsPage />} />
+          <Route path="/g/:groupId/admin" element={<GroupAdminPage />} />
+          <Route path="/g/:groupId/audit" element={<AuditPage />} />
+          {me.is_platform_admin && <Route path="/platform" element={<PlatformAdminPage />} />}
           <Route path="/g/:groupId/agents/:agentId/memory" element={<AgentMemoryPage />} />
           <Route path="/g/:groupId/group-memory" element={<GroupMemoryPage />} />
         </Routes>

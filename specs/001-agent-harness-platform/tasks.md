@@ -224,23 +224,23 @@ qui lance mais ne peut pas approuver, révocation qui arrête ses exécutions, q
 
 ### Tests for User Story 4 (write first, must fail)
 
-- [ ] T110 [P] [US4] Write backend/tests/contract/test_admin_contract.py for `/admin/groups`, `/admin/groups/{groupId}/disable`, members, service accounts (token returned only at creation) and `/audit`
-- [ ] T111 [P] [US4] Write backend/tests/integration/test_cross_group_api.py (SC-009): a member of group B gets 404 on every group-scoped GET/PUT/DELETE/POST route of group A (agents, tools, runs, events, approvals, memory, proposals, members, service accounts, audit), routes enumerated from the FastAPI app
-- [ ] T112 [P] [US4] Write backend/tests/integration/test_service_accounts.py: token stored hashed with salt and shown once; launch allowed only on `allowed_agent_ids`, with `launch_mode = programmatic`; status, stop and events reachable by the program (FR-002b); approval decision by the token gets 403; revocation stops its runs and later calls get 401
-- [ ] T113 [P] [US4] Write backend/tests/integration/test_quotas.py: exceeding `max_concurrent_runs` or `max_tokens_per_day` returns 429 and records a run `rejected_quota`
-- [ ] T114 [P] [US4] Write backend/tests/integration/test_membership_lifecycle.py: removing a member stops their running runs and denies access; a person in two groups has only the roles of each group; disabling a group stops its runs, blocks access and keeps data; every admin action creates an AdminAuditEntry with author and date
-- [ ] T115 [P] [US4] Write frontend/tests/GroupAdminPage.test.tsx: service-account token displayed once then hidden; roles editable as a multi-select
+- [X] T110 [P] [US4] Write backend/tests/contract/test_admin_contract.py for `/admin/groups`, `/admin/groups/{groupId}/disable`, members, service accounts (token returned only at creation) and `/audit`
+- [X] T111 [P] [US4] Write backend/tests/integration/test_cross_group_api.py (SC-009): a member of group B gets 404 on every group-scoped GET/PUT/DELETE/POST route of group A (agents, tools, runs, events, approvals, memory, proposals, members, service accounts, audit), routes enumerated from the FastAPI app
+- [X] T112 [P] [US4] Write backend/tests/integration/test_service_accounts.py: token stored hashed with salt and shown once; launch allowed only on `allowed_agent_ids`, with `launch_mode = programmatic`; status, stop and events reachable by the program (FR-002b); approval decision by the token gets 403; revocation stops its runs and later calls get 401
+- [X] T113 [P] [US4] Write backend/tests/integration/test_quotas.py: exceeding `max_concurrent_runs` or `max_tokens_per_day` returns 429 and records a run `rejected_quota`
+- [X] T114 [P] [US4] Write backend/tests/integration/test_membership_lifecycle.py: removing a member stops their running runs and denies access; a person in two groups has only the roles of each group; disabling a group stops its runs, blocks access and keeps data; every admin action creates an AdminAuditEntry with author and date
+- [X] T115 [P] [US4] Write frontend/tests/GroupAdminPage.test.tsx: service-account token displayed once then hidden; roles editable as a multi-select
 
 ### Implementation for User Story 4
 
-- [ ] T116 [P] [US4] Create ServiceAccount model in backend/src/harness/db/models/identity.py: `name`, `token_hash`, `token_prefix`, `status` : `active` | `revoked`, `allowed_agent_ids`, `max_concurrent_runs`, `max_tokens_per_day`
-- [ ] T117 [US4] Create migration backend/alembic/versions/0005_service_accounts.py with RLS
-- [ ] T118 [US4] Implement backend/src/harness/auth/service_accounts.py (token generation, `token_prefix`, salted SHA-256 hash, bearer authentication in `current_principal`, revoke stopping runs) and extend backend/src/harness/api/runs.py to set `launch_mode = programmatic` for service accounts (makes T112 pass)
-- [ ] T119 [US4] Implement backend/src/harness/groups/service.py: invite, update roles and quotas, remove (stop runs), platform-level create and disable group (stop runs), all recorded with `record_admin_action` (makes T114 pass)
-- [ ] T120 [US4] Enforce quotas in backend/src/harness/runtime/runner.py before launch (`rejected_quota`, HTTP 429) (makes T113 pass)
-- [ ] T121 [US4] Implement routes in backend/src/harness/api/admin.py, backend/src/harness/api/members.py, backend/src/harness/api/service_accounts.py and backend/src/harness/api/audit.py (makes T110, T111 pass)
-- [ ] T122 [P] [US4] Implement frontend/src/pages/GroupAdminPage.tsx (members, roles, quotas, service accounts) and frontend/src/pages/AuditPage.tsx (makes T115 pass)
-- [ ] T123 [P] [US4] Implement frontend/src/pages/PlatformAdminPage.tsx (create and disable groups, designate first admins) visible only to `is_platform_admin`
+- [X] T116 [P] [US4] Create ServiceAccount model in backend/src/harness/db/models/identity.py: `name`, `token_hash`, `token_prefix`, `status` : `active` | `revoked`, `allowed_agent_ids`, `max_concurrent_runs`, `max_tokens_per_day`
+- [X] T117 [US4] Create migration backend/alembic/versions/0005_service_accounts.py with RLS
+- [X] T118 [US4] Implement backend/src/harness/auth/service_accounts.py (token generation, `token_prefix`, salted SHA-256 hash, bearer authentication in `current_principal`, revoke stopping runs) and extend backend/src/harness/api/runs.py to set `launch_mode = programmatic` for service accounts (makes T112 pass)
+- [X] T119 [US4] Implement backend/src/harness/groups/service.py: invite, update roles and quotas, remove (stop runs), platform-level create and disable group (stop runs), all recorded with `record_admin_action` (makes T114 pass)
+- [X] T120 [US4] Enforce quotas in backend/src/harness/runtime/runner.py before launch (`rejected_quota`, HTTP 429) (makes T113 pass)
+- [X] T121 [US4] Implement routes in backend/src/harness/api/admin.py, backend/src/harness/api/members.py, backend/src/harness/api/service_accounts.py and backend/src/harness/api/audit.py (makes T110, T111 pass)
+- [X] T122 [P] [US4] Implement frontend/src/pages/GroupAdminPage.tsx (members, roles, quotas, service accounts) and frontend/src/pages/AuditPage.tsx (makes T115 pass)
+- [X] T123 [P] [US4] Implement frontend/src/pages/PlatformAdminPage.tsx (create and disable groups, designate first admins) visible only to `is_platform_admin`
 
 **Checkpoint**: All user stories should now be independently functional
 

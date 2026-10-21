@@ -47,7 +47,28 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Lister les groupes (admin plateforme ; ne donne accès à aucun contenu, FR-022a) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Group"][];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+            };
+        };
         put?: never;
         /** Créer un groupe et désigner ses premiers administrateurs (FR-022a, admin plateforme) */
         post: {
@@ -76,6 +97,13 @@ export interface paths {
                     };
                 };
                 403: components["responses"]["Forbidden"];
+                /** @description Un groupe de ce nom existe déjà */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
             };
         };
         delete?: never;
@@ -267,7 +295,30 @@ export interface paths {
             };
             cookie?: never;
         };
-        get?: never;
+        /** Lister les comptes de service (rôle admin) ; le jeton n'est jamais renvoyé */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    groupId: components["parameters"]["groupId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ServiceAccount"][];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+            };
+        };
         put?: never;
         /** Créer un compte de service (FR-002a). Le jeton n'est renvoyé qu'une fois. */
         post: {
@@ -1479,6 +1530,8 @@ export interface components {
             name?: string;
             token_prefix?: string;
             allowed_agent_ids?: string[];
+            max_concurrent_runs?: number;
+            max_tokens_per_day?: number;
             /** @enum {string} */
             status?: "active" | "revoked";
         };
@@ -1675,8 +1728,11 @@ export interface components {
             decided_by?: string | null;
         };
         AdminAuditEntry: {
-            /** Format: uuid */
-            actor_id?: string;
+            /**
+             * Format: uuid
+             * @description Nul pour une action menée en ligne de commande
+             */
+            actor_id?: string | null;
             action?: string;
             target_type?: string;
             target_id?: string;

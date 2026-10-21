@@ -63,3 +63,23 @@ class Membership(GroupScopedMixin, Base):
     max_concurrent_runs: Mapped[int] = mapped_column(Integer, server_default=text("5"))
     max_tokens_per_day: Mapped[int] = mapped_column(Integer, server_default=text("1000000"))
     status: Mapped[str] = mapped_column(String(20), server_default=MembershipStatus.ACTIVE.value)
+
+
+class ServiceAccountStatus(enum.StrEnum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
+
+
+class ServiceAccount(GroupScopedMixin, Base):
+    """Identité non humaine d'un groupe (FR-002a) : lance des agents, ne peut jamais approuver."""
+
+    __tablename__ = "service_accounts"
+
+    name: Mapped[str] = mapped_column(String)
+    token_hash: Mapped[str] = mapped_column(String)  # SHA-256 salé du secret ; le jeton n'est jamais stocké
+    token_salt: Mapped[str] = mapped_column(String)
+    token_prefix: Mapped[str] = mapped_column(String)  # pour l'affichage
+    status: Mapped[str] = mapped_column(String(20), server_default=ServiceAccountStatus.ACTIVE.value)
+    allowed_agent_ids: Mapped[list[str]] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
+    max_concurrent_runs: Mapped[int] = mapped_column(Integer, server_default=text("2"))
+    max_tokens_per_day: Mapped[int] = mapped_column(Integer, server_default=text("1000000"))

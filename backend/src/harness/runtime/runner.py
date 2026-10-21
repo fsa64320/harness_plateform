@@ -20,7 +20,7 @@ from typing import Any
 import structlog
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from harness.agents import service as agents
@@ -29,7 +29,7 @@ from harness.catalog import credentials
 from harness.catalog.hook_rules import HookEventData
 from harness.catalog.hooks import HookRunner
 from harness.catalog.mcp import load_runtime_tools
-from harness.db.models.identity import Group
+from harness.db.models.identity import Group, Membership, ServiceAccount
 from harness.db.models.runs import TERMINAL_STATUSES, ApprovalRequest, ApprovalStatus, Run, RunStatus
 from harness.db.session import group_context, platform_context
 from harness.memory import proposals
@@ -162,8 +162,8 @@ class Runner:
                 previous = await session.get(Run, relaunch_of)
                 if previous is None or previous.status != RunStatus.INTERRUPTED:
                     raise RelaunchInvalid("Seule une exécution interrompue peut être relancée")
-            await self._check_quota(session, principal, group_id)
             snapshot = await agents.build_snapshot(session, agent)
+            refusal = await self._quota_refusal(session, principal, group_id)
             run = Run(
                 group_id=group_id,
                 agent_id=agent.id,
@@ -176,13 +176,62 @@ class Runner:
                 thread_id=str(uuid.uuid4()),
                 relaunched_from=relaunch_of,
             )
+            if refusal is not None:  # refusée mais consignée : « rejected_quota », avec son motif
+                run.status, run.stop_reason, run.ended_at = RunStatus.REJECTED_QUOTA, refusal[0], _utcnow()
             session.add(run)
             await session.flush()
+        if refusal is not None:
+            await self.emit(
+                group_id, run.id, "run_ended",
+                {"status": "rejected_quota", "stop_reason": refusal[0], "iterations": 0, "input_tokens": 0,
+                 "output_tokens": 0, "cost": 0.0, "duration_ms": 0, "result": refusal[1]},
+            )
+            raise QuotaExceeded(refusal[1])
         self._spawn(run.id, group_id, resume=None)
         return run
 
-    async def _check_quota(self, session: AsyncSession, principal: Principal, group_id: uuid.UUID) -> None:
-        """Quotas par membre et par compte de service (FR-023)."""
+    async def _quota_refusal(
+        self, session: AsyncSession, principal: Principal, group_id: uuid.UUID
+    ) -> tuple[str, str] | None:
+        """Quotas par membre et par compte de service (FR-023) : `(motif, message)` si dépassé."""
+        if principal.kind == "service_account":
+            account = await session.get(ServiceAccount, principal.id)
+            if account is None:
+                return None
+            max_concurrent, max_tokens = account.max_concurrent_runs, account.max_tokens_per_day
+        else:
+            membership = (
+                await session.execute(
+                    select(Membership).where(Membership.person_id == principal.id, Membership.status == "active")
+                )
+            ).scalar_one_or_none()
+            if membership is None:
+                return None
+            max_concurrent, max_tokens = membership.max_concurrent_runs, membership.max_tokens_per_day
+        active = (
+            await session.execute(
+                select(func.count()).select_from(Run).where(
+                    Run.triggered_by_id == principal.id,
+                    Run.status.not_in([s.value for s in TERMINAL_STATUSES]),
+                )
+            )
+        ).scalar_one()
+        if active >= max_concurrent:
+            return (
+                "max_concurrent_runs",
+                f"Quota atteint : {active} exécutions simultanées sur {max_concurrent} autorisées.",
+            )
+        midnight = _utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        used = (
+            await session.execute(
+                select(func.coalesce(func.sum(Run.input_tokens + Run.output_tokens), 0)).where(
+                    Run.triggered_by_id == principal.id, Run.created_at >= midnight
+                )
+            )
+        ).scalar_one()
+        if used >= max_tokens:
+            return ("max_tokens_per_day", f"Quota atteint : {used} tokens consommés aujourd'hui sur {max_tokens} autorisés.")
+        return None
 
     def _spawn(
         self, run_id: uuid.UUID, group_id: uuid.UUID, *, resume: list[dict[str, Any]] | None

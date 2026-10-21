@@ -26,6 +26,11 @@ paths:
               schema: { $ref: "#/components/schemas/Me" }
 
   /admin/groups:
+    get:
+      summary: Lister les groupes (admin plateforme ; ne donne accès à aucun contenu, FR-022a)
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Group" } } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
     post:
       summary: Créer un groupe et désigner ses premiers administrateurs (FR-022a, admin plateforme)
       requestBody:
@@ -41,6 +46,7 @@ paths:
       responses:
         "201": { description: Créé, content: { application/json: { schema: { $ref: "#/components/schemas/Group" } } } }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Un groupe de ce nom existe déjà }
   /admin/groups/{groupId}/disable:
     post:
       summary: Désactiver un groupe (arrête ses exécutions)
@@ -86,6 +92,11 @@ paths:
 
   /groups/{groupId}/service-accounts:
     parameters: [{ $ref: "#/components/parameters/groupId" }]
+    get:
+      summary: Lister les comptes de service (rôle admin) ; le jeton n'est jamais renvoyé
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/ServiceAccount" } } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
     post:
       summary: Créer un compte de service (FR-002a). Le jeton n'est renvoyé qu'une fois.
       requestBody:
@@ -444,6 +455,8 @@ components:
         name: { type: string }
         token_prefix: { type: string }
         allowed_agent_ids: { type: array, items: { type: string, format: uuid } }
+        max_concurrent_runs: { type: integer }
+        max_tokens_per_day: { type: integer }
         status: { type: string, enum: [active, revoked] }
     ToolKind:
       type: string
@@ -609,7 +622,7 @@ components:
     AdminAuditEntry:
       type: object
       properties:
-        actor_id: { type: string, format: uuid }
+        actor_id: { type: [string, "null"], format: uuid, description: "Nul pour une action menée en ligne de commande" }
         action: { type: string }
         target_type: { type: string }
         target_id: { type: string }
