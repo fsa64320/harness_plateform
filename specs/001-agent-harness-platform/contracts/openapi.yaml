@@ -1,0 +1,613 @@
+openapi: 3.1.0
+info:
+  title: Harness Plateform API
+  version: 0.1.0
+  description: |
+    API REST de la plateforme, utilisée par l'interface web et par les programmes externes
+    (FR-002). Toutes les routes de contenu sont préfixées par le groupe ; un appel qui vise un
+    autre groupe que ceux de l'appelant renvoie 404, jamais 403, pour ne pas révéler l'existence
+    de la ressource (FR-022, SC-009). Les identifiants d'accès ne figurent dans aucune réponse
+    (FR-014).
+servers:
+  - url: /api/v1
+security:
+  - oidcSession: []
+  - serviceAccountToken: []
+
+paths:
+  /me:
+    get:
+      summary: Identité courante et groupes accessibles (FR-022b)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+
+  /admin/groups:
+    post:
+      summary: Créer un groupe et désigner ses premiers administrateurs (FR-022a, admin plateforme)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, admin_emails]
+              properties:
+                name: { type: string }
+                admin_emails: { type: array, items: { type: string, format: email } }
+      responses:
+        "201": { description: Créé, content: { application/json: { schema: { $ref: "#/components/schemas/Group" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/groups/{groupId}/disable:
+    post:
+      summary: Désactiver un groupe (arrête ses exécutions)
+      parameters: [{ $ref: "#/components/parameters/groupId" }]
+      responses:
+        "204": { description: Désactivé }
+
+  /groups/{groupId}/members:
+    parameters: [{ $ref: "#/components/parameters/groupId" }]
+    get:
+      summary: Lister les membres
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Membership" } } } } }
+    post:
+      summary: Inviter une personne avec des rôles (rôle admin requis)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, roles]
+              properties:
+                email: { type: string, format: email }
+                roles: { type: array, items: { $ref: "#/components/schemas/Role" } }
+      responses:
+        "201": { description: Créé, content: { application/json: { schema: { $ref: "#/components/schemas/Membership" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /groups/{groupId}/members/{membershipId}:
+    parameters: [{ $ref: "#/components/parameters/groupId" }, { name: membershipId, in: path, required: true, schema: { type: string, format: uuid } }]
+    patch:
+      summary: Modifier rôles et quotas
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MembershipUpdate" }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Membership" } } } }
+    delete:
+      summary: Retirer du groupe (arrête ses exécutions en cours)
+      responses:
+        "204": { description: Retiré }
+
+  /groups/{groupId}/service-accounts:
+    parameters: [{ $ref: "#/components/parameters/groupId" }]
+    post:
+      summary: Créer un compte de service (FR-002a). Le jeton n'est renvoyé qu'une fois.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, allowed_agent_ids]
+              properties:
+                name: { type: string }
+                allowed_agent_ids: { type: array, items: { type: string, format: uuid } }
+                max_concurrent_runs: { type: integer, minimum: 1 }
+                max_tokens_per_day: { type: integer, minimum: 1 }
+      responses:
+        "201":
+          description: Créé
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/ServiceAccount" }
+                  - type: object
+                    required: [token]
+                    properties:
+                      token: { type: string, description: "Affiché une seule fois, stocké haché" }
+  /groups/{groupId}/service-accounts/{serviceAccountId}/revoke:
+    parameters: [{ $ref: "#/components/parameters/groupId" }, { name: serviceAccountId, in: path, required: true, schema: { type: string, format: uuid } }]
+    post:
+      summary: Révoquer (arrête ses exécutions, refuse tout lancement)
+      responses:
+        "204": { description: Révoqué }
+
+  /groups/{groupId}/tools:
+    parameters: [{ $ref: "#/components/parameters/groupId" }]
+    get:
+      summary: Catalogue d'outils du groupe
+      parameters:
+        - { name: kind, in: query, schema: { $ref: "#/components/schemas/ToolKind" } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Tool" } } } } }
+    post:
+      summary: Enregistrer un serveur MCP, une skill ou un hook (rôle tool_manager, FR-010)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ToolCreate" }
+      responses:
+        "201": { description: "Créé ; pour un serveur MCP, joignabilité vérifiée et opérations listées (FR-011)", content: { application/json: { schema: { $ref: "#/components/schemas/Tool" } } } }
+        "422": { description: Serveur MCP injoignable ou configuration invalide, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /groups/{groupId}/tools/{toolId}:
+    parameters: [{ $ref: "#/components/parameters/groupId" }, { $ref: "#/components/parameters/toolId" }]
+    get:
+      summary: Détail d'un outil (sans identifiant d'accès)
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Tool" } } } }
+    delete:
+      summary: Retirer du catalogue (statut retired)
+      responses:
+        "204": { description: Retiré }
+  /groups/{groupId}/tools/{toolId}/operations/{operationName}/classification:
+    parameters: [{ $ref: "#/components/parameters/groupId" }, { $ref: "#/components/parameters/toolId" }, { name: operationName, in: path, required: true, schema: { type: string } }]
+    put:
+      summary: Classer une opération (FR-005a, rôle tool_manager)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [classification]
+              properties:
+                classification: { type: string, enum: [read_only, external_effect] }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ToolOperation" } } } }
+
+  /groups/{groupId}/agents:
+    parameters: [{ $ref: "#/components/parameters/groupId" }]
+    get:
+      summary: Lister les agents du groupe
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Agent" } } } } }
+    post:
+      summary: Créer un agent (FR-001)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentInput" }
+      responses:
+        "201": { description: Créé, content: { application/json: { schema: { $ref: "#/components/schemas/Agent" } } } }
+        "422": { description: "Modèle inconnu ou sans appel d'outils, ou outil hors catalogue", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /groups/{groupId}/agents/{agentId}:
+    parameters: [{ $ref: "#/components/parameters/groupId" }, { $ref: "#/components/parameters/agentId" }]
+    get:
+      summary: Détail
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Agent" } } } }
+    put:
+      summary: Modifier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentInput" }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Agent" } } } }
+    delete:
+      summary: Supprimer
+      responses:
+        "204": { description: Supprimé }
+  /groups/{groupId}/agents/{agentId}/duplicate:
+    parameters: [{ $ref: "#/components/parameters/groupId" }, { $ref: "#/components/parameters/agentId" }]
+    post:
+      summary: Dupliquer (mémoire d'agent vide)
+      responses:
+        "201": { description: Créé, content: { application/json: { schema: { $ref: "#/components/schemas/Agent" } } } }
+
+  /groups/{groupId}/runs:
+    parameters: [{ $ref: "#/components/parameters/groupId" }]
+    get:
+      summary: Lister et filtrer les exécutions (FR-008)
+      parameters:
+        - { name: agent_id, in: query, schema: { type: string, format: uuid } }
+        - { name: triggered_by, in: query, schema: { type: string, format: uuid } }
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/RunStatus" } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Run" } }
+                  next_cursor: { type: [string, "null"] }
+    post:
+      summary: Lancer un agent (manuel ou programmatique, FR-002)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_id, task]
+              properties:
+                agent_id: { type: string, format: uuid }
+                task: { type: string, minLength: 1 }
+                relaunch_of: { type: string, format: uuid, description: "Relance d'une exécution interrompue (FR-003a)" }
+      responses:
+        "202": { description: Accepté, content: { application/json: { schema: { $ref: "#/components/schemas/Run" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { description: Quota dépassé (FR-023), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /groups/{groupId}/runs/{runId}:
+    parameters: [{ $ref: "#/components/parameters/groupId" }, { $ref: "#/components/parameters/runId" }]
+    get:
+      summary: État, consommation et résultat (FR-002b)
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Run" } } } }
+  /groups/{groupId}/runs/{runId}/stop:
+    parameters: [{ $ref: "#/components/parameters/groupId" }, { $ref: "#/components/parameters/runId" }]
+    post:
+      summary: Arrêter (FR-004)
+      responses:
+        "202": { description: Arrêt demandé }
+  /groups/{groupId}/runs/{runId}/events:
+    parameters: [{ $ref: "#/components/parameters/groupId" }, { $ref: "#/components/parameters/runId" }]
+    get:
+      summary: Trace de l'exécution, en JSON paginé ou en flux SSE (voir trace-events.md)
+      parameters:
+        - { name: after_seq, in: query, schema: { type: integer, minimum: 0 } }
+        - { name: Last-Event-ID, in: header, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/TraceEvent" } }
+            text/event-stream:
+              schema: { type: string }
+
+  /groups/{groupId}/approvals:
+    parameters: [{ $ref: "#/components/parameters/groupId" }]
+    get:
+      summary: Demandes d'approbation que l'appelant peut traiter
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, rejected, expired] } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/ApprovalRequest" } } } } }
+  /groups/{groupId}/approvals/{approvalId}/decision:
+    parameters: [{ $ref: "#/components/parameters/groupId" }, { name: approvalId, in: path, required: true, schema: { type: string, format: uuid } }]
+    post:
+      summary: Approuver ou refuser (FR-005b ; refusé aux comptes de service)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approve, reject] }
+                comment: { type: string }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Déjà décidée ou expirée }
+
+  /groups/{groupId}/agents/{agentId}/memory:
+    parameters: [{ $ref: "#/components/parameters/groupId" }, { $ref: "#/components/parameters/agentId" }]
+    get:
+      summary: Entrées de la mémoire d'agent
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/MemoryEntry" } } } } }
+  /groups/{groupId}/group-memory:
+    parameters: [{ $ref: "#/components/parameters/groupId" }]
+    get:
+      summary: Entrées de la mémoire de groupe
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/MemoryEntry" } } } } }
+    post:
+      summary: Ajouter une entrée (rôle group_memory_manager)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MemoryEntryInput" }
+      responses:
+        "201": { description: Créé, content: { application/json: { schema: { $ref: "#/components/schemas/MemoryEntry" } } } }
+  /groups/{groupId}/memory/{entryId}:
+    parameters: [{ $ref: "#/components/parameters/groupId" }, { name: entryId, in: path, required: true, schema: { type: string, format: uuid } }]
+    put:
+      summary: Modifier (verrou optimiste par version, FR-016)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content, version]
+              properties:
+                content: { type: string }
+                version: { type: integer }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/MemoryEntry" } } } }
+        "409": { description: Conflit de version }
+    delete:
+      summary: Supprimer (historisé)
+      responses:
+        "204": { description: Supprimé }
+  /groups/{groupId}/memory/{entryId}/revisions:
+    parameters: [{ $ref: "#/components/parameters/groupId" }, { name: entryId, in: path, required: true, schema: { type: string, format: uuid } }]
+    get:
+      summary: Historique d'une entrée
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/MemoryRevision" } } } } }
+  /groups/{groupId}/group-memory/proposals:
+    parameters: [{ $ref: "#/components/parameters/groupId" }]
+    get:
+      summary: Propositions des agents (FR-017a)
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, accepted, rejected, expired] } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/GroupMemoryProposal" } } } } }
+  /groups/{groupId}/group-memory/proposals/{proposalId}/decision:
+    parameters: [{ $ref: "#/components/parameters/groupId" }, { name: proposalId, in: path, required: true, schema: { type: string, format: uuid } }]
+    post:
+      summary: Accepter ou refuser (rôle group_memory_manager)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [accept, reject] }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/GroupMemoryProposal" } } } }
+
+  /groups/{groupId}/audit:
+    parameters: [{ $ref: "#/components/parameters/groupId" }]
+    get:
+      summary: Journal d'administration (FR-024, rôle admin)
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/AdminAuditEntry" } } } } }
+
+components:
+  securitySchemes:
+    oidcSession:
+      type: apiKey
+      in: cookie
+      name: harness_session
+      description: Session établie après connexion OIDC (SSO)
+    serviceAccountToken:
+      type: http
+      scheme: bearer
+      description: Jeton de compte de service (FR-002a)
+  parameters:
+    groupId: { name: groupId, in: path, required: true, schema: { type: string, format: uuid } }
+    toolId: { name: toolId, in: path, required: true, schema: { type: string, format: uuid } }
+    agentId: { name: agentId, in: path, required: true, schema: { type: string, format: uuid } }
+    runId: { name: runId, in: path, required: true, schema: { type: string, format: uuid } }
+  responses:
+    Forbidden:
+      description: Rôle insuffisant
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+    Role:
+      type: string
+      enum: [admin, tool_manager, group_memory_manager, approver, member]
+    Me:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        is_platform_admin: { type: boolean }
+        memberships: { type: array, items: { $ref: "#/components/schemas/Membership" } }
+    Group:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        status: { type: string, enum: [active, disabled] }
+    Membership:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        group_id: { type: string, format: uuid }
+        person_email: { type: string }
+        roles: { type: array, items: { $ref: "#/components/schemas/Role" } }
+        max_concurrent_runs: { type: integer }
+        max_tokens_per_day: { type: integer }
+        status: { type: string, enum: [active, removed] }
+    MembershipUpdate:
+      type: object
+      properties:
+        roles: { type: array, items: { $ref: "#/components/schemas/Role" } }
+        max_concurrent_runs: { type: integer, minimum: 1 }
+        max_tokens_per_day: { type: integer, minimum: 1 }
+    ServiceAccount:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        token_prefix: { type: string }
+        allowed_agent_ids: { type: array, items: { type: string, format: uuid } }
+        status: { type: string, enum: [active, revoked] }
+    ToolKind:
+      type: string
+      enum: [mcp_server, skill, hook]
+    ToolCreate:
+      type: object
+      required: [kind, name]
+      properties:
+        kind: { $ref: "#/components/schemas/ToolKind" }
+        name: { type: string }
+        description: { type: string }
+        mcp:
+          type: object
+          properties:
+            url: { type: string, format: uri, pattern: "^https://" }
+            credential: { type: string, writeOnly: true, description: "Chiffré au repos, jamais renvoyé" }
+        skill:
+          type: object
+          properties:
+            files:
+              type: object
+              description: "Chemin relatif → contenu ; doit contenir SKILL.md avec frontmatter name/description"
+              additionalProperties: { type: string }
+        hook: { $ref: "#/components/schemas/HookDefinition" }
+    HookDefinition:
+      type: object
+      required: [events, hook_type]
+      properties:
+        events:
+          type: array
+          items: { type: string, enum: [run_start, run_end, before_tool_call, after_tool_call] }
+        hook_type: { type: string, enum: [rule, webhook] }
+        priority: { type: integer, default: 100 }
+        condition: { type: object, description: "Règle déclarative : agent, outil, classification, déclencheur, motif" }
+        decision: { type: string, enum: [allow, block, log] }
+        url: { type: string, format: uri, pattern: "^https://" }
+        signing_secret: { type: string, writeOnly: true }
+        timeout_seconds: { type: integer, maximum: 10, default: 10 }
+    Tool:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind: { $ref: "#/components/schemas/ToolKind" }
+        name: { type: string }
+        description: { type: string }
+        status: { type: string, enum: [active, retired] }
+        has_credential: { type: boolean }
+        operations: { type: array, items: { $ref: "#/components/schemas/ToolOperation" } }
+        hook: { $ref: "#/components/schemas/HookDefinition" }
+    ToolOperation:
+      type: object
+      properties:
+        name: { type: string }
+        input_schema: { type: object }
+        classification: { type: string, enum: [read_only, external_effect, unclassified] }
+    AgentInput:
+      type: object
+      required: [name, instructions, model_id, allowed_tool_ids, limits]
+      properties:
+        name: { type: string }
+        instructions: { type: string }
+        model_id: { type: string, description: "Identifiant de modèle Ollama compatible appel d'outils" }
+        allowed_tool_ids: { type: array, items: { type: string, format: uuid } }
+        agent_memory_enabled: { type: boolean, default: true }
+        group_memory_enabled: { type: boolean, default: false }
+        limits:
+          type: object
+          required: [max_iterations, max_duration_seconds, max_tokens]
+          properties:
+            max_iterations: { type: integer, minimum: 1 }
+            max_duration_seconds: { type: integer, minimum: 1 }
+            max_tokens: { type: integer, minimum: 1 }
+    Agent:
+      allOf:
+        - { $ref: "#/components/schemas/AgentInput" }
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            created_by: { type: string, format: uuid }
+            config_changed_at: { type: [string, "null"], format: date-time }
+    RunStatus:
+      type: string
+      enum: [queued, running, awaiting_approval, succeeded, failed, stopped, limit_reached, interrupted, expired, rejected_quota]
+    Run:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        agent_id: { type: string, format: uuid }
+        task: { type: string }
+        status: { $ref: "#/components/schemas/RunStatus" }
+        stop_reason: { type: [string, "null"] }
+        triggered_by_type: { type: string, enum: [person, service_account] }
+        triggered_by_id: { type: string, format: uuid }
+        launch_mode: { type: string, enum: [manual, programmatic] }
+        relaunched_from: { type: [string, "null"], format: uuid }
+        iterations: { type: integer }
+        input_tokens: { type: integer }
+        output_tokens: { type: integer }
+        cost: { type: number }
+        started_at: { type: [string, "null"], format: date-time }
+        ended_at: { type: [string, "null"], format: date-time }
+        result: { type: [string, "null"] }
+    TraceEvent:
+      type: object
+      description: Voir contracts/trace-events.md pour les types et charges utiles
+      required: [run_id, seq, type, occurred_at, payload]
+      properties:
+        run_id: { type: string, format: uuid }
+        seq: { type: integer }
+        type: { type: string }
+        occurred_at: { type: string, format: date-time }
+        payload: { type: object }
+    ApprovalRequest:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        tool_operation: { type: string }
+        arguments: { type: object, description: "Arguments masqués" }
+        status: { type: string, enum: [pending, approved, rejected, expired] }
+        requested_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        decided_by: { type: [string, "null"], format: uuid }
+    MemoryEntryInput:
+      type: object
+      required: [path, content]
+      properties:
+        path: { type: string }
+        content: { type: string }
+    MemoryEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        scope: { type: string, enum: [agent, group] }
+        agent_id: { type: [string, "null"], format: uuid }
+        path: { type: string }
+        content: { type: string }
+        version: { type: integer }
+        source_run_id: { type: [string, "null"], format: uuid }
+        author_type: { type: string, enum: [agent, person] }
+        updated_at: { type: string, format: date-time }
+    MemoryRevision:
+      type: object
+      properties:
+        version: { type: integer }
+        previous_content: { type: [string, "null"] }
+        change_type: { type: string, enum: [create, update, delete, conflict] }
+        changed_by: { type: string }
+        changed_at: { type: string, format: date-time }
+    GroupMemoryProposal:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        agent_id: { type: string, format: uuid }
+        proposed_path: { type: string }
+        proposed_content: { type: string }
+        status: { type: string, enum: [pending, accepted, rejected, expired] }
+        decided_by: { type: [string, "null"], format: uuid }
+    AdminAuditEntry:
+      type: object
+      properties:
+        actor_id: { type: string, format: uuid }
+        action: { type: string }
+        target_type: { type: string }
+        target_id: { type: string }
+        details: { type: object }
+        occurred_at: { type: string, format: date-time }
