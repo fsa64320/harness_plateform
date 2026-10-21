@@ -25,14 +25,25 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from harness.agents import service as agents
 from harness.auth.permissions import Principal
+from harness.catalog import credentials
+from harness.catalog.hook_rules import HookEventData
+from harness.catalog.hooks import HookRunner
 from harness.catalog.mcp import load_runtime_tools
 from harness.db.models.identity import Group
 from harness.db.models.runs import TERMINAL_STATUSES, ApprovalRequest, ApprovalStatus, Run, RunStatus
 from harness.db.session import group_context, platform_context
+from harness.memory.backends import SkillFileStore, build_backend
 from harness.runtime import approvals
-from harness.runtime.builder import build_agent, compose_system_prompt, make_run_context
+from harness.runtime.builder import (
+    allowed_skills,
+    build_agent,
+    compose_system_prompt,
+    hooks_from_snapshot,
+    make_run_context,
+)
 from harness.runtime.context import RunContext
 from harness.runtime.models import ModelProvider
+from harness.traces.redaction import redact
 from harness.traces.writer import RunEventSink, TraceWriter, message_text
 
 log = structlog.get_logger()
@@ -108,9 +119,8 @@ class Runner:
 
     async def wait(self, run_id: uuid.UUID) -> None:
         """Attend la fin du segment en cours (utile aux tests et à l'arrêt propre)."""
-        task = self._tasks.get(run_id)
-        if task is not None:
-            await asyncio.wait([task])
+        while (task := self._tasks.get(run_id)) is not None and not task.done():
+            await asyncio.wait([task])  # une reprise lancée par ce segment est suivie à son tour
 
     async def abandon_all(self) -> None:
         """Mort brutale simulée : annule toutes les tâches sans rien écrire (le démarrage suivant
@@ -214,6 +224,7 @@ class Runner:
             snapshot: dict[str, Any] = dict(run.agent_snapshot)
             thread_id, task_text = run.thread_id, run.task
             consumed = (run.iterations, run.input_tokens, run.output_tokens, run.active_seconds)
+            triggered_by = (run.triggered_by_type, str(run.triggered_by_id))
             started_payload = {
                 "agent_id": snapshot["agent_id"],
                 "agent_snapshot_version": hashlib.sha256(
@@ -238,6 +249,14 @@ class Runner:
             input_tokens=consumed[1],
             output_tokens=consumed[2],
             active_seconds=consumed[3],
+            triggered_by=triggered_by,
+        )
+        hook_runner = HookRunner(
+            hooks_from_snapshot(snapshot),
+            group_id,
+            run_id,
+            secrets=await self._hook_secrets(group_id, snapshot),
+            known_secrets=secrets,
         )
         if resume is None:
             await sink.emit(
@@ -255,6 +274,8 @@ class Runner:
         out: dict[str, Any] = {}
         try:
             tools, warnings = await load_runtime_tools(snapshot, await self._headers_for(group_id, snapshot))
+            if resume is None:
+                warnings = [*self._retired_warnings(snapshot), *warnings]
             for warning in warnings:
                 await sink.emit("config_warning", {"message": warning})
             graph = build_agent(
@@ -262,8 +283,9 @@ class Runner:
                 self.provider,
                 tools,
                 checkpointer=self.checkpointer,
-                backend_factory=None,
+                backend_factory=lambda _ctx: self._backend_for(group_id, snapshot),
                 ctx=ctx,
+                hook_runner=hook_runner,
             )
             limit_iterations = snapshot["limits"]["max_iterations"]
             config = {
@@ -300,17 +322,54 @@ class Runner:
             outcome = (RunStatus.FAILED, "error", f"{type(exc).__name__}: {exc}")
 
         counters = self._counters(ctx, cost_rate)
+        if outcome is None and not out.get("__interrupt__") and ctx.start_blocked_by:
+            outcome = (RunStatus.FAILED, "blocked_by_hook", f"Bloquée par le hook « {ctx.start_blocked_by} »")
         if outcome is not None:
+            await self._fire_run_end(hook_runner, ctx, outcome[0], outcome[1])
             await self._end_run(group_id, run_id, outcome[0], outcome[1], outcome[2], counters)
             return
         if out.get("__interrupt__"):
-            await self._await_approval(group_id, run_id, snapshot, graph, config, out["__interrupt__"], counters, secrets)
+            await self._await_approval(
+                group_id, run_id, snapshot, graph, config, out["__interrupt__"], counters, secrets, ctx, hook_runner
+            )
             return
         if ctx.limit_hit:
             status, reason = RunStatus.LIMIT_REACHED, ctx.limit_hit
         else:
             status, reason = RunStatus.SUCCEEDED, None
+        await self._fire_run_end(hook_runner, ctx, status, reason)
         await self._end_run(group_id, run_id, status, reason, self._final_text(out), counters)
+
+    async def _fire_run_end(self, runner: HookRunner, ctx: RunContext, status: str, reason: str | None) -> None:
+        """Hooks `run_end` pour les fins que le middleware ne voit pas (erreur, arrêt, limite de durée) :
+        ils ne font que consigner, l'exécution étant déjà finie."""
+        if ctx.run_end_fired or not runner.applies_to("run_end"):
+            return
+        ctx.run_end_fired = True
+        data = HookEventData(
+            event="run_end",
+            agent_id=ctx.agent_id,
+            agent_name=ctx.agent_name,
+            triggered_by_type=ctx.triggered_by_type,
+            triggered_by_id=ctx.triggered_by_id,
+            status=status,
+            stop_reason=reason,
+        )
+        with contextlib.suppress(Exception):
+            verdict = await runner.evaluate(data)
+            for e in verdict.evaluations:
+                suffix = " (consigné seulement : l'action est déjà passée)" if e.decision == "block" else ""
+                await ctx.sink.emit(
+                    "hook_evaluated",
+                    {
+                        "hook_id": e.hook_id,
+                        "hook_type": e.hook_type,
+                        "event": e.event,
+                        "decision": e.decision,
+                        "reason": e.reason + suffix,
+                        "duration_ms": e.duration_ms,
+                    },
+                )
 
     @staticmethod
     def _counters(ctx: RunContext, cost_rate: Decimal) -> dict[str, Any]:
@@ -331,12 +390,33 @@ class Runner:
         return None
 
     async def _known_secrets(self, group_id: uuid.UUID) -> list[str]:
-        """Valeurs secrètes du groupe à masquer partout (identifiants d'outils : story 2)."""
-        return []
+        """Valeurs secrètes du groupe, masquées dans la trace et les logs (FR-009, FR-014)."""
+        async with self._txn(group_id) as session:
+            return await credentials.group_secrets(session, group_id)
 
     async def _headers_for(self, group_id: uuid.UUID, snapshot: dict[str, Any]) -> dict[str, dict[str, str]]:
         """En-têtes d'authentification des serveurs MCP, déchiffrés au moment de l'exécution seulement."""
-        return {}
+        async with self._txn(group_id) as session:
+            return await credentials.tool_headers(session, snapshot)
+
+    async def _hook_secrets(self, group_id: uuid.UUID, snapshot: dict[str, Any]) -> dict[str, str]:
+        ids = [h.id for h in hooks_from_snapshot(snapshot) if h.hook_type == "webhook"]
+        async with self._txn(group_id) as session:
+            return await credentials.hook_secrets(session, ids)
+
+    def _backend_for(self, group_id: uuid.UUID, snapshot: dict[str, Any]) -> Any:
+        """Fichiers de l'agent : espace de travail éphémère, plus `/skills/` en lecture seule."""
+        skill_ids = [uuid.UUID(t["id"]) for t in allowed_skills(snapshot)]
+        routes = {"/skills/": SkillFileStore(self._sessionmaker, group_id, skill_ids)} if skill_ids else {}
+        return build_backend(routes)  # type: ignore[arg-type]
+
+    @staticmethod
+    def _retired_warnings(snapshot: dict[str, Any]) -> list[str]:
+        return [
+            f"L'outil « {t['name']} » a été retiré du catalogue : l'agent s'exécute sans lui."
+            for t in snapshot.get("tools", [])
+            if t.get("status") == "retired"
+        ]
 
     # --- approbation -----------------------------------------------------------------------
 
@@ -350,52 +430,101 @@ class Runner:
         interrupts: Sequence[Any],
         counters: dict[str, Any],
         secrets: Sequence[str],
+        ctx: RunContext,
+        hook_runner: HookRunner,
     ) -> None:
+        """Crée les demandes d'approbation d'un arrêt du graphe. Les hooks « avant appel » sont évalués
+        d'abord : un appel qu'ils bloquent est refusé sans déranger personne."""
         state = await graph.aget_state(config)
-        last_ai = next(
-            (m for m in reversed(state.values.get("messages", [])) if isinstance(m, AIMessage)), None
-        )
+        last_ai = next((m for m in reversed(state.values.get("messages", [])) if isinstance(m, AIMessage)), None)
         pending_calls = list(last_ai.tool_calls) if last_ai else []
-        created: list[tuple[ApprovalRequest, str | None]] = []
+
+        # 1. appels en attente, associés à leur identifiant d'appel, et décision des hooks
+        planned: list[tuple[Any, list[dict[str, Any]], list[str | None]]] = []
+        verdicts: dict[tuple[int, int], tuple[str, str]] = {}
+        evaluations: list[Any] = []
+        for i, interrupt in enumerate(interrupts):
+            actions = interrupt.value.get("action_requests", [])
+            call_ids: list[str | None] = []
+            for j, action in enumerate(actions):
+                match = next(
+                    (c for c in pending_calls if c["name"] == action["name"] and c["args"] == action["args"]), None
+                )
+                if match is not None:
+                    pending_calls.remove(match)
+                call_ids.append(match["id"] if match else None)
+                if hook_runner.applies_to("before_tool_call"):
+                    verdict = await hook_runner.evaluate(
+                        HookEventData(
+                            event="before_tool_call",
+                            agent_id=ctx.agent_id,
+                            agent_name=ctx.agent_name,
+                            triggered_by_type=ctx.triggered_by_type,
+                            triggered_by_id=ctx.triggered_by_id,
+                            tool=action["name"],
+                            operation=ctx.operations.get(action["name"], action["name"]),
+                            classification=ctx.classification_of(action["name"]),
+                            arguments=action.get("args", {}),
+                        )
+                    )
+                    evaluations.extend(verdict.evaluations)
+                    block = next((e for e in verdict.evaluations if e.decision == "block"), None)
+                    if block is not None:
+                        name = next((h.name for h in hook_runner.hooks if h.id == block.hook_id), block.hook_id)
+                        verdicts[(i, j)] = (name, block.reason)
+            planned.append((interrupt, actions, call_ids))
+
+        # 2. demandes en base ; celles que les hooks bloquent sont refusées d'office
+        created: list[tuple[int, ApprovalRequest]] = []
+        ready: list[tuple[uuid.UUID, list[dict[str, Any]]]] = []
         async with self._txn(group_id) as session:
             run = await session.get(Run, run_id)
             group = await session.get(Group, group_id)
             assert run is not None and group is not None
-            for interrupt in interrupts:
-                actions = interrupt.value.get("action_requests", [])
-                call_ids: list[str | None] = []
-                for action in actions:
-                    match = next(
-                        (c for c in pending_calls if c["name"] == action["name"] and c["args"] == action["args"]),
-                        None,
-                    )
-                    if match is not None:
-                        pending_calls.remove(match)
-                    call_ids.append(match["id"] if match else None)
+            for i, (interrupt, actions, call_ids) in enumerate(planned):
                 requests = await approvals.create_requests(
-                    session,
-                    run=run,
-                    group=group,
-                    interrupt_id=str(interrupt.id),
-                    actions=actions,
-                    call_ids=call_ids,
-                    secrets=secrets,
+                    session, run=run, group=group, interrupt_id=str(interrupt.id), actions=actions,
+                    call_ids=call_ids, secrets=secrets,
                 )
-                created.extend((r, cid) for r, cid in zip(requests, call_ids, strict=True))
+                for j, request in enumerate(requests):
+                    if (i, j) in verdicts:
+                        name, reason = verdicts[(i, j)]
+                        request.status = ApprovalStatus.REJECTED
+                        request.decided_at = _utcnow()
+                        request.comment = f"Bloqué par le hook « {name} » : {reason}"
+                    created.append((i, request))
+                if all(r.status != ApprovalStatus.PENDING for r in requests):
+                    ready.append((run_id, [approvals.to_decision(r) for r in requests]))
             await self._apply_counters(session, run, counters)
             run.status = RunStatus.AWAITING_APPROVAL
-        for request, call_id in created:
-            await self.emit(
-                group_id,
-                run_id,
-                "approval_requested",
+
+        # 3. trace : évaluations de hooks, refus d'office, demandes pour les approbateurs
+        for e in evaluations:
+            await ctx.sink.emit(
+                "hook_evaluated",
                 {
-                    "approval_id": str(request.id),
-                    "call_id": call_id,
-                    "operation": request.tool_operation,
-                    "expires_at": request.expires_at.isoformat().replace("+00:00", "Z"),
+                    "hook_id": e.hook_id, "hook_type": e.hook_type, "event": e.event,
+                    "decision": e.decision, "reason": e.reason, "duration_ms": e.duration_ms,
                 },
             )
+        for _, request in created:
+            if request.status == ApprovalStatus.PENDING:
+                await ctx.sink.emit(
+                    "approval_requested",
+                    {
+                        "approval_id": str(request.id),
+                        "call_id": request.call_id,
+                        "operation": request.tool_operation,
+                        "expires_at": request.expires_at.isoformat().replace("+00:00", "Z"),
+                    },
+                )
+            else:
+                await ctx.sink.emit(
+                    "approval_decided",
+                    {"approval_id": str(request.id), "decision": "reject", "decided_by": None},
+                )
+        for resume_run_id, decisions in ready:
+            self._spawn(resume_run_id, group_id, resume=decisions)
 
     async def decide(
         self, access: Any, approval_id: uuid.UUID, decision: str, comment: str | None
@@ -514,6 +643,9 @@ class Runner:
         counters: dict[str, Any] | None = None,
     ) -> None:
         """Clôt l'exécution : statut en base d'abord, puis `run_ended` (dernier événement)."""
+        if result:
+            # Le résultat final est une sortie de modèle : il peut recopier un secret (FR-009, SC-005).
+            result = redact(result, await self._known_secrets(group_id))
         async with self._txn(group_id) as session:
             run = await session.get(Run, run_id, with_for_update=True)
             if run is None or run.status in TERMINAL_STATUSES:

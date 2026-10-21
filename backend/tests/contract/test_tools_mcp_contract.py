@@ -18,7 +18,7 @@ async def test_register_list_and_get_an_mcp_server(
     assert_matches_contract(r)
     tool = r.json()
     assert tool["kind"] == "mcp_server" and tool["status"] == "active" and tool["has_credential"] is False
-    assert {o["name"] for o in tool["operations"]} == {"lookup", "send_message", "wait"}
+    assert {o["name"] for o in tool["operations"]} == {"lookup", "send_message", "wait", "whoami"}
     assert {o["classification"] for o in tool["operations"]} == {"unclassified"}  # défaut sûr
 
     listing = await world.client.get(world.url("/tools?kind=mcp_server"), headers=world.bob.headers)

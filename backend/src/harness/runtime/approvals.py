@@ -127,10 +127,10 @@ async def decide(
     )
     if any(s.status == ApprovalStatus.PENDING for s in siblings):
         return Decided(request, run.id, None)
-    return Decided(request, run.id, [_to_decision(s) for s in siblings])
+    return Decided(request, run.id, [to_decision(s) for s in siblings])
 
 
-def _to_decision(request: ApprovalRequest) -> dict[str, Any]:
+def to_decision(request: ApprovalRequest) -> dict[str, Any]:
     if request.status == ApprovalStatus.APPROVED:
         return {"type": "approve"}
     return {"type": "reject", "message": request.comment or "Appel refusé par une personne habilitée."}

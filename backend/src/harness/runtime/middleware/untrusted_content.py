@@ -35,4 +35,9 @@ class UntrustedContentMiddleware(AgentMiddleware):
         if not isinstance(result, ToolMessage):
             return result
         name = request.tool_call["name"]
+        path = str(request.tool_call.get("args", {}).get("file_path", ""))
+        if name == "read_file" and path.startswith("/skills/") and result.status != "error":
+            # Les skills sont rédigées par les gestionnaires d'outils du groupe : ce sont des instructions
+            # de confiance du catalogue, pas du contenu externe (elles restent lisibles seulement).
+            return result.model_copy(update={"content": f'<skill_file path="{path}">\n{message_text(result)}\n</skill_file>'})
         return result.model_copy(update={"content": wrap_untrusted(message_text(result), name)})

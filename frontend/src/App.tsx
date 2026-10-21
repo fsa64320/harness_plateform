@@ -9,6 +9,7 @@ import AgentsPage from "./pages/AgentsPage";
 import ApprovalsPage from "./pages/ApprovalsPage";
 import RunPage from "./pages/RunPage";
 import RunsPage from "./pages/RunsPage";
+import ToolsPage from "./pages/ToolsPage";
 
 export const useMe = () =>
   useQuery({
@@ -40,7 +41,8 @@ export default function App() {
         {groupId && (
           <nav>
             <Link to={`/g/${groupId}/agents`}>Agents</Link>{" "}
-            <Link to={`/g/${groupId}/runs`}>Exécutions</Link> <ApprovalBadge groupId={groupId} />
+            <Link to={`/g/${groupId}/runs`}>Exécutions</Link>{" "}
+            <Link to={`/g/${groupId}/tools`}>Outils</Link> <ApprovalBadge groupId={groupId} />
           </nav>
         )}
       </header>
@@ -54,6 +56,7 @@ export default function App() {
           <Route path="/g/:groupId/runs" element={<RunsPage />} />
           <Route path="/g/:groupId/runs/:runId" element={<RunPage />} />
           <Route path="/g/:groupId/approvals" element={<ApprovalsPage />} />
+          <Route path="/g/:groupId/tools" element={<ToolsPage />} />
         </Routes>
       </main>
     </>

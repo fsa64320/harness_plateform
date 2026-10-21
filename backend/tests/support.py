@@ -8,10 +8,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+import httpx
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.checkpoint.memory import InMemorySaver
 
+from harness.catalog.hooks import Hook, HookRunner
 from harness.runtime.builder import AgentConfig, build_agent, build_agent_config, make_run_context
 from harness.runtime.context import RunContext
 from harness.runtime.models import FakeProvider, Step
@@ -123,6 +125,9 @@ def make_rig(
     *,
     tool_results: dict[str, Any] | None = None,
     known_secrets: Sequence[str] = (),
+    hooks: Sequence[Hook] = (),
+    webhook_http: httpx.AsyncClient | None = None,
+    webhook_secret: str = "signing-secret",  # noqa: S107
 ) -> Rig:
     snapshot = snapshot or make_snapshot()
     provider = FakeProvider(list(script))
@@ -134,6 +139,9 @@ def make_rig(
     tools = fake_mcp_tools(calls, tool_results)
     ctx = make_run_context(snapshot, run_id=run_id, group_id=group_id, sink=sink)
     checkpointer = InMemorySaver()
+    hook_runner = HookRunner(
+        list(hooks), group_id, run_id, secrets={h.id: webhook_secret for h in hooks}, http=webhook_http
+    )
     graph = build_agent(
         snapshot,
         provider,
@@ -141,8 +149,9 @@ def make_rig(
         checkpointer=checkpointer,
         backend_factory=None,
         ctx=ctx,
+        hook_runner=hook_runner,
     )
-    config = build_agent_config(snapshot, tools, ctx=ctx)
+    config = build_agent_config(snapshot, tools, ctx=ctx, hook_runner=hook_runner)
     return Rig(graph, ctx, store, provider, checkpointer, config, calls)
 
 

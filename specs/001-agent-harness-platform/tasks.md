@@ -150,28 +150,28 @@ après 10 s, skill chargée et visible dans la trace, identifiant MCP absent de 
 
 ### Tests for User Story 2 (write first, must fail)
 
-- [ ] T072 [P] [US2] Write backend/tests/contract/test_tools_catalog_contract.py for `POST /tools` with kinds `skill` and `hook`, `DELETE /tools/{toolId}`, and `Tool.has_credential` without any credential value
-- [ ] T073 [P] [US2] Write backend/tests/unit/test_hook_rules.py: conditions on agent, tool, classification, triggerer and argument pattern; decisions `allow` | `block` | `log`; evaluation by `priority`, `block` wins over `allow`
-- [ ] T074 [P] [US2] Write backend/tests/unit/test_hook_webhook.py: request carries `X-Harness-Event`, `X-Harness-Delivery`, `X-Harness-Timestamp`, `X-Harness-Signature: sha256=<hmac>`; body matches contracts/hook-webhook.md and contains no credential and no memory content; timeout of 10 s, network error, non-200 status, invalid body or unknown decision all yield `block`
-- [ ] T075 [P] [US2] Write backend/tests/unit/test_hooks_middleware.py: hooks fire on `run_start`, `run_end`, `before_tool_call`, `after_tool_call`; a `block` before a call prevents it and emits `hook_evaluated`; `block` on `after_tool_call` / `run_end` is only logged
-- [ ] T076 [P] [US2] Write backend/tests/integration/test_credentials_secrecy.py (SC-005): register an MCP server with a credential, run an agent using it; the credential value never appears in any API response, captured log line or TraceEvent payload, and is sent only to the MCP server
-- [ ] T077 [P] [US2] Write backend/tests/integration/test_skills.py: a skill without `SKILL.md` frontmatter `name`/`description` is rejected (422); an allowed skill appears by name in the agent prompt, its `SKILL.md` is read via `read_file` and traced; no script in the skill is executed
-- [ ] T078 [P] [US2] Write backend/tests/integration/test_tool_retirement.py: retiring a tool sets `config_changed_at` on agents using it; the next run executes without it and emits `config_warning`
-- [ ] T079 [P] [US2] Write frontend/tests/ToolsPage.test.tsx: credential input is write-only and never pre-filled; classification can be changed per operation
+- [X] T072 [P] [US2] Write backend/tests/contract/test_tools_catalog_contract.py for `POST /tools` with kinds `skill` and `hook`, `DELETE /tools/{toolId}`, and `Tool.has_credential` without any credential value
+- [X] T073 [P] [US2] Write backend/tests/unit/test_hook_rules.py: conditions on agent, tool, classification, triggerer and argument pattern; decisions `allow` | `block` | `log`; evaluation by `priority`, `block` wins over `allow`
+- [X] T074 [P] [US2] Write backend/tests/unit/test_hook_webhook.py: request carries `X-Harness-Event`, `X-Harness-Delivery`, `X-Harness-Timestamp`, `X-Harness-Signature: sha256=<hmac>`; body matches contracts/hook-webhook.md and contains no credential and no memory content; timeout of 10 s, network error, non-200 status, invalid body or unknown decision all yield `block`
+- [X] T075 [P] [US2] Write backend/tests/unit/test_hooks_middleware.py: hooks fire on `run_start`, `run_end`, `before_tool_call`, `after_tool_call`; a `block` before a call prevents it and emits `hook_evaluated`; `block` on `after_tool_call` / `run_end` is only logged
+- [X] T076 [P] [US2] Write backend/tests/integration/test_credentials_secrecy.py (SC-005): register an MCP server with a credential, run an agent using it; the credential value never appears in any API response, captured log line or TraceEvent payload, and is sent only to the MCP server
+- [X] T077 [P] [US2] Write backend/tests/integration/test_skills.py: a skill without `SKILL.md` frontmatter `name`/`description` is rejected (422); an allowed skill appears by name in the agent prompt, its `SKILL.md` is read via `read_file` and traced; no script in the skill is executed
+- [X] T078 [P] [US2] Write backend/tests/integration/test_tool_retirement.py: retiring a tool sets `config_changed_at` on agents using it; the next run executes without it and emits `config_warning`
+- [X] T079 [P] [US2] Write frontend/tests/ToolsPage.test.tsx: credential input is write-only and never pre-filled; classification can be changed per operation
 
 ### Implementation for User Story 2
 
-- [ ] T080 [P] [US2] Create Credential and HookDefinition models in backend/src/harness/db/models/catalog.py: Credential `ciphertext`, `nonce`, `key_version`; Tool `credential_id` (optionnel), skill fields `skill_name`, `skill_description`, `files`; HookDefinition `events` subset of `run_start`, `run_end`, `before_tool_call`, `after_tool_call`, `hook_type` : `rule` | `webhook`, `condition`, `decision` : `allow` | `block` | `log`, `url` (HTTPS), `signing_secret_id`, `timeout_seconds` (10), `priority`
-- [ ] T081 [US2] Create migration backend/alembic/versions/0003_catalog_extensions.py for T080 with RLS on new tables
-- [ ] T082 [US2] Implement backend/src/harness/catalog/credentials.py (store encrypted, never serialize, decrypt only for runtime injection) and inject MCP credentials as request headers in backend/src/harness/catalog/mcp.py at run time only (makes T076 pass)
-- [ ] T083 [P] [US2] Implement backend/src/harness/catalog/skills.py: validate `SKILL.md` frontmatter, store files in `Tool.files` (served read-only under `/skills/` by `SqlBackend`), classification `read_only`
-- [ ] T084 [P] [US2] Implement the rule engine in backend/src/harness/catalog/hook_rules.py (makes T073 pass)
-- [ ] T085 [P] [US2] Implement the webhook client in backend/src/harness/catalog/hook_webhook.py per contracts/hook-webhook.md with fail-safe `block` (makes T074 pass)
-- [ ] T086 [US2] Implement backend/src/harness/runtime/middleware/hooks.py using T084–T085, emitting `hook_evaluated`, and wire it in backend/src/harness/runtime/builder.py (makes T075 pass)
-- [ ] T087 [US2] Extend backend/src/harness/runtime/builder.py to pass allowed skills as `skills` sources served read-only by `SqlBackend` under `/skills/` (makes T077 pass)
-- [ ] T088 [US2] Implement retirement in backend/src/harness/catalog/service.py (status `retired`, flag agents, `config_warning` at next run) (makes T078 pass)
-- [ ] T089 [US2] Extend backend/src/harness/api/tools.py with skill and hook creation, `DELETE`, credential write-only handling and `has_credential`, recording AdminAuditEntry for every catalog change (FR-024) (makes T072 pass)
-- [ ] T090 [P] [US2] Implement frontend/src/pages/ToolsPage.tsx with forms for MCP server (URL, write-only credential), skill (file upload), hook (rule builder or webhook URL + secret) and a per-operation classification editor (makes T079 pass)
+- [X] T080 [P] [US2] Create Credential and HookDefinition models in backend/src/harness/db/models/catalog.py: Credential `ciphertext`, `nonce`, `key_version`; Tool `credential_id` (optionnel), skill fields `skill_name`, `skill_description`, `files`; HookDefinition `events` subset of `run_start`, `run_end`, `before_tool_call`, `after_tool_call`, `hook_type` : `rule` | `webhook`, `condition`, `decision` : `allow` | `block` | `log`, `url` (HTTPS), `signing_secret_id`, `timeout_seconds` (10), `priority`
+- [X] T081 [US2] Create migration backend/alembic/versions/0003_catalog_extensions.py for T080 with RLS on new tables
+- [X] T082 [US2] Implement backend/src/harness/catalog/credentials.py (store encrypted, never serialize, decrypt only for runtime injection) and inject MCP credentials as request headers in backend/src/harness/catalog/mcp.py at run time only (makes T076 pass)
+- [X] T083 [P] [US2] Implement backend/src/harness/catalog/skills.py: validate `SKILL.md` frontmatter, store files in `Tool.files` (served read-only under `/skills/` by `SqlBackend`), classification `read_only`
+- [X] T084 [P] [US2] Implement the rule engine in backend/src/harness/catalog/hook_rules.py (makes T073 pass)
+- [X] T085 [P] [US2] Implement the webhook client in backend/src/harness/catalog/hook_webhook.py per contracts/hook-webhook.md with fail-safe `block` (makes T074 pass)
+- [X] T086 [US2] Implement backend/src/harness/runtime/middleware/hooks.py using T084–T085, emitting `hook_evaluated`, and wire it in backend/src/harness/runtime/builder.py (makes T075 pass)
+- [X] T087 [US2] Extend backend/src/harness/runtime/builder.py to pass allowed skills as `skills` sources served read-only by `SqlBackend` under `/skills/` (makes T077 pass)
+- [X] T088 [US2] Implement retirement in backend/src/harness/catalog/service.py (status `retired`, flag agents, `config_warning` at next run) (makes T078 pass)
+- [X] T089 [US2] Extend backend/src/harness/api/tools.py with skill and hook creation, `DELETE`, credential write-only handling and `has_credential`, recording AdminAuditEntry for every catalog change (FR-024) (makes T072 pass)
+- [X] T090 [P] [US2] Implement frontend/src/pages/ToolsPage.tsx with forms for MCP server (URL, write-only credential), skill (file upload), hook (rule builder or webhook URL + secret) and a per-operation classification editor (makes T079 pass)
 
 **Checkpoint**: At this point, User Stories 1 AND 2 should both work independently
 

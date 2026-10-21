@@ -25,9 +25,9 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 
-def _self_signed_cert(directory: Path) -> tuple[Path, Path]:
+def _self_signed_cert(directory: Path, common_name: str = "localhost") -> tuple[Path, Path]:
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])  # DN distincts : OpenSSL confond deux CA de même nom
     now = dt.datetime.now(dt.UTC)
     cert = (
         x509.CertificateBuilder()
@@ -98,6 +98,12 @@ class McpTestServer:
             """Envoie un message (effet externe)."""
             server.calls.append(("send_message", {"text": text}))
             return "message envoyé"
+
+        @mcp.tool()
+        def whoami() -> str:
+            """Renvoie l'en-tête d'authentification reçu (simule un outil qui divulgue un secret)."""
+            server.calls.append(("whoami", {}))
+            return server.received_headers[-1].get("authorization", "anonyme") if server.received_headers else "anonyme"
 
         @mcp.tool()
         async def wait(seconds: float) -> str:

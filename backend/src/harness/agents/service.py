@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from harness.agents.schemas import AgentInput
 from harness.auth.permissions import GroupAccess
 from harness.db.models.agents import Agent
-from harness.db.models.catalog import Tool, ToolKind, ToolOperation, ToolStatus
+from harness.db.models.catalog import HookDefinition, Tool, ToolKind, ToolOperation, ToolStatus
 from harness.runtime.models import ModelProvider, ModelProviderError
 
 
@@ -109,6 +109,7 @@ async def update_agent(
         raise AgentForbidden()
     await _validate(session, provider, data, check_model=data.model_id != agent.model_id)
     _apply(agent, data)
+    agent.config_changed_at = None  # le membre a revu la configuration : l'avertissement est levé
     await session.flush()
     return agent
 
@@ -164,6 +165,37 @@ async def build_snapshot(session: AsyncSession, agent: Agent) -> dict[str, Any]:
     by_tool: dict[uuid.UUID, list[ToolOperation]] = {}
     for op in ops:
         by_tool.setdefault(op.tool_id, []).append(op)
+    hooks = {
+        h.tool_id: h
+        for h in (
+            await session.execute(select(HookDefinition).where(HookDefinition.tool_id.in_(tool_ids or {uuid.uuid4()})))
+        ).scalars()
+    }
+
+    def tool_entry(t: Tool) -> dict[str, Any]:
+        entry: dict[str, Any] = {"id": str(t.id), "kind": t.kind, "name": t.name, "status": t.status}
+        if t.kind == ToolKind.MCP_SERVER:
+            entry["url"] = t.url
+            entry["credential_id"] = str(t.credential_id) if t.credential_id else None
+            entry["operations"] = [
+                {"id": str(o.id), "name": o.operation_name, "classification": o.classification}
+                for o in sorted(by_tool.get(t.id, []), key=lambda o: o.operation_name)
+            ]
+        elif t.kind == ToolKind.SKILL:
+            entry["skill_name"], entry["skill_description"] = t.skill_name, t.skill_description
+        elif t.kind == ToolKind.HOOK and t.id in hooks:
+            h = hooks[t.id]
+            entry["hook"] = {
+                "events": h.events,
+                "hook_type": h.hook_type,
+                "condition": h.condition,
+                "decision": h.decision,
+                "url": h.url,
+                "timeout_seconds": h.timeout_seconds,
+                "priority": h.priority,
+            }
+        return entry
+
     return {
         "agent_id": str(agent.id),
         "name": agent.name,
@@ -178,20 +210,5 @@ async def build_snapshot(session: AsyncSession, agent: Agent) -> dict[str, Any]:
             "max_duration_seconds": agent.max_duration_seconds,
             "max_tokens": agent.max_tokens,
         },
-        "tools": [
-            {
-                "id": str(t.id),
-                "kind": t.kind,
-                "name": t.name,
-                "status": t.status,
-                "url": t.url,
-                "operations": [
-                    {"id": str(o.id), "name": o.operation_name, "classification": o.classification}
-                    for o in sorted(by_tool.get(t.id, []), key=lambda o: o.operation_name)
-                ]
-                if t.kind == ToolKind.MCP_SERVER
-                else [],
-            }
-            for t in tools
-        ],
+        "tools": [tool_entry(t) for t in tools],
     }

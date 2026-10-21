@@ -29,6 +29,10 @@ class RunContext:
     classifications: dict[str, str]  # nom lié -> classification
     internal_tools: tuple[str, ...]
     operations: dict[str, str] = field(default_factory=dict)  # nom lié -> nom d'opération MCP
+    agent_id: str = ""
+    agent_name: str = ""
+    triggered_by_type: str = "person"
+    triggered_by_id: str = ""
     # Consommation (reprise depuis la base quand une exécution reprend après approbation).
     iterations: int = 0
     input_tokens: int = 0
@@ -36,6 +40,9 @@ class RunContext:
     active_seconds_before: float = 0.0
     segment_started: float = field(default_factory=time.monotonic)
     limit_hit: str | None = None
+    # Hooks : `run_start` bloqué (id du hook) ; `run_end` déjà évalué par le middleware.
+    start_blocked_by: str | None = None
+    run_end_fired: bool = False
 
     @property
     def total_tokens(self) -> int:

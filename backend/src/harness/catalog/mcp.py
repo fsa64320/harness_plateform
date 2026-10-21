@@ -18,6 +18,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from harness.catalog.credentials import bearer_headers, store_credential
 from harness.db.models.catalog import Classification, Tool, ToolKind, ToolOperation, ToolStatus
 from harness.groups.audit import record_admin_action
 
@@ -85,17 +86,18 @@ async def register_mcp_server(
     name: str,
     description: str,
     url: str,
-    headers: Mapping[str, str] | None = None,
-    credential_id: uuid.UUID | None = None,
+    credential: str | None = None,
 ) -> Tool:
-    """Vérifie la joignabilité, enregistre le serveur et ses opérations (non classées)."""
+    """Vérifie la joignabilité, enregistre le serveur et ses opérations (non classées). L'identifiant
+    éventuel est chiffré au repos et ne sera plus jamais renvoyé (FR-014)."""
     validate_registration(name, url)
     existing = await session.execute(
         select(Tool.id).where(Tool.kind == ToolKind.MCP_SERVER, Tool.name == name)
     )
     if existing.first() is not None:
         raise ToolConflict(f"Un outil « {name} » existe déjà dans ce groupe")
-    operations = await discover_operations(name, url, headers)
+    operations = await discover_operations(name, url, bearer_headers(credential) if credential else None)
+    credential_row = await store_credential(session, group_id, credential) if credential else None
 
     tool = Tool(
         group_id=group_id,
@@ -104,6 +106,7 @@ async def register_mcp_server(
         description=description,
         url=url,
         created_by=actor_id,
+        credential_id=credential_row.id if credential_row else None,
         last_check_at=dt.datetime.now(dt.UTC),
         last_check_ok=True,
     )
@@ -127,7 +130,13 @@ async def register_mcp_server(
         action="tool.register",
         target_type="tool",
         target_id=tool.id,
-        details={"kind": "mcp_server", "name": name, "url": url, "operations": [o["name"] for o in operations]},
+        details={
+            "kind": "mcp_server",
+            "name": name,
+            "url": url,
+            "has_credential": credential is not None,
+            "operations": [o["name"] for o in operations],
+        },
     )
     return tool
 

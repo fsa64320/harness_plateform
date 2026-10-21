@@ -26,10 +26,19 @@ _SENSITIVE_KEYS = re.compile(
 )
 
 
+# Valeurs secrètes connues du processus (identifiants d'outils déjà vus) : masquées partout, y compris
+# dans les logs, où aucun contexte de groupe ne fournit la liste.
+_REGISTRY: set[str] = set()
+
+
+def register_known_secrets(values: Iterable[str]) -> None:
+    _REGISTRY.update(v for v in values if v)
+
+
 def redact(value: Any, known_secrets: Iterable[str]) -> Any:
     """Retourne une copie de `value` où secrets connus, motifs de jetons et de clés, e-mails et
     téléphones sont remplacés par `MASK`. Les valeurs non textuelles sont inchangées."""
-    secrets = sorted({s for s in known_secrets if s}, key=len, reverse=True)
+    secrets = sorted({s for s in known_secrets if s} | _REGISTRY, key=len, reverse=True)
     return _walk(value, secrets)
 
 
@@ -60,9 +69,10 @@ def _redact_text(text: str, secrets: list[str]) -> str:
 
 def structlog_redactor(known_secrets: Iterable[str] = ()) -> Any:
     """Processeur structlog : masque chaque champ de l'événement de log."""
-    secrets = list(known_secrets)
+    extra = list(known_secrets)
 
     def processor(_logger: Any, _name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
-        return {k: _walk(v, sorted(set(secrets), key=len, reverse=True)) for k, v in event_dict.items()}
+        secrets = sorted({s for s in extra if s} | _REGISTRY, key=len, reverse=True)
+        return {k: _walk(v, secrets) for k, v in event_dict.items()}
 
     return processor
