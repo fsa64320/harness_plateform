@@ -9,6 +9,11 @@ Route : `GET /api/v1/groups/{groupId}/runs/{runId}/events`
 - Délai cible entre l'occurrence et la diffusion : < 2 s (SC-002).
 - Toute charge utile est **masquée** avant écriture (FR-009) : secrets connus du groupe, motifs de
   jetons et de clés, adresses e-mail et numéros de téléphone remplacés par `«masqué»`.
+- Chaque champ texte est masqué puis tronqué à 64 Ko ; en cas de troncature, l'objet porte
+  `truncated: true` et le `sha256` du contenu complet.
+- Reconstitution : `run_started.system_prompt` suivi de la concaténation des `input_messages`
+  et des `content` des étapes précédentes redonne exactement le contexte envoyé au modèle à chaque
+  étape (constitution IV : trace inspectable et rejouable).
 
 ## Enveloppe commune
 
@@ -26,8 +31,8 @@ Route : `GET /api/v1/groups/{groupId}/runs/{runId}/events`
 
 | `type` | Payload (champs principaux) | Exigences |
 |---|---|---|
-| `run_started` | `agent_id`, `agent_snapshot_version`, `task`, `limits`, `triggered_by_type`, `launch_mode`, `relaunched_from` | FR-002, FR-007 |
-| `model_step` | `iteration`, `content` (texte de raisonnement ou de réponse), `input_tokens`, `output_tokens`, `duration_ms` | FR-007 |
+| `run_started` | `agent_id`, `agent_snapshot_version`, `task`, `limits`, `triggered_by_type`, `launch_mode`, `relaunched_from`, `system_prompt` (prompt système effectif, après ajout par le framework des skills et de la mémoire chargée), `internal_tools` (liste effective, FR-006a) | FR-002, FR-006a, FR-007 |
+| `model_step` | `iteration`, `input_messages` (messages nouveaux depuis l'étape précédente : tâche, résultats d'outils, contenu de mémoire ou de skill injecté), `content` (texte de raisonnement ou de réponse), `input_tokens`, `output_tokens`, `duration_ms` | FR-007, constitution IV |
 | `tool_call_started` | `call_id`, `tool`, `operation`, `classification`, `arguments` | FR-007 |
 | `tool_call_finished` | `call_id`, `status` (`ok` / `error`), `result` (tronqué), `duration_ms`, `error` | FR-007, cas limite MCP injoignable |
 | `tool_call_refused` | `call_id`, `tool`, `reason` (`not_allowed` / `unknown_tool` / `cross_group`) | FR-006 |

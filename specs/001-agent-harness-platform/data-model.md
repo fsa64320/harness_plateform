@@ -4,8 +4,9 @@
 
 Conventions : toutes les tables métier ont `id` (UUID), `created_at` et `updated_at`. Toute table
 rattachée à un groupe porte `group_id` (non nul) et est protégée par une politique Row-Level
-Security `group_id = current_setting('app.group_id')` (FR-022, SC-009). La mémoire et les
-checkpoints LangGraph vivent dans le schéma `langgraph`, isolés par espace de noms (research R-06).
+Security `group_id = current_setting('app.group_id')` (FR-022, SC-009). La mémoire et les skills
+sont des tables métier comme les autres ; seuls les checkpoints LangGraph vivent dans le schéma
+`langgraph`, chaque `thread_id` étant rattaché à un `Run` (research R-06, R-07).
 
 ## Identités et groupes
 
@@ -48,7 +49,8 @@ Journal des actions d'administration (FR-024).
   `description`, `status` : `active` | `retired`, `created_by`
 - `mcp_server` : `url` (HTTPS, transport distant uniquement), `credential_id` (optionnel),
   `last_check_at`, `last_check_ok`
-- `skill` : `skill_name`, `skill_description` (frontmatter), `files` (référence au store)
+- `skill` : `skill_name`, `skill_description` (frontmatter), `files` (JSON chemin → contenu, servi
+  en lecture seule par `SqlBackend`)
 - `hook` : voir `HookDefinition`
 - Règle : un outil `retired` n'est plus lié à aucune exécution ; les agents qui l'utilisaient
   sont signalés « configuration modifiée » (US2-4).
@@ -80,9 +82,12 @@ Extension d'un `Tool` de type `hook` (FR-012, FR-012a).
 ### Agent
 Configuration réutilisable (FR-001).
 - `group_id`, `name`, `instructions`, `model_id` (identifiant Ollama), `created_by`
-- `allowed_tool_ids` (MCP, skills, hooks), `agent_memory_enabled`, `group_memory_enabled`
+- `allowed_tool_ids` (MCP, skills, hooks), `agent_memory_enabled`, `group_memory_enabled`,
+  `subagents_enabled` (faux par défaut, FR-006a)
 - Limites : `max_iterations`, `max_duration_seconds`, `max_tokens`
 - `config_changed_at` : renseigné quand un outil utilisé est retiré
+- Droits (FR-001a) : tout membre consulte, lance et duplique ; seuls `created_by` et les membres
+  `admin` modifient ou suppriment l'agent et sa mémoire d'agent (FR-016).
 - Duplication : copie de la configuration, **mémoire d'agent vide**, accès à la mémoire de groupe
   conservé.
 
@@ -125,6 +130,9 @@ Règle : `interrupted` est terminal ; seule une relance manuelle crée un nouvea
 Demande d'approbation (FR-005, FR-005b).
 - `group_id`, `run_id`, `tool_operation`, `arguments` (masqués), `requested_at`, `expires_at`
 - `status` : `pending` → `approved` | `rejected` | `expired`
+- `no_eligible_approver` (bool) : vrai quand aucune personne habilitée n'existe (exécution d'un
+  compte de service dans un groupe sans `approver`) ; la demande est alors visible en lecture
+  par les administrateurs du groupe, qui sont avertis
 - `decided_by` (Person), `decided_at`
 - Règle d'autorisation : `decided_by` = déclencheur du run (s'il est une personne) **ou** membre
   ayant le rôle `approver` ; jamais un `ServiceAccount`.
@@ -132,11 +140,12 @@ Demande d'approbation (FR-005, FR-005b).
 ## Mémoire
 
 ### MemoryEntry
-Vue métier des fichiers de mémoire stockés dans le store LangGraph (FR-015, FR-016).
+Source de vérité de la mémoire, exposée à l'agent comme des fichiers par `SqlBackend`
+(FR-015, FR-016, research R-06).
 - `group_id`, `scope` : `agent` | `group`, `agent_id` (si `scope = agent`), `path`
 - `content`, `version` (verrou optimiste), `source_run_id`, `author_type` :
   `agent` | `person`, `author_id`
-- Espaces de noms du store : `(group_id, "agent", agent_id)` et `(group_id, "group")`
+- Unicité : (`group_id`, `scope`, `agent_id`, `path`)
 
 ### MemoryRevision
 Historique (FR-016).

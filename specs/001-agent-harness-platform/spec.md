@@ -53,7 +53,7 @@ consultable après la fin.
    fil de l'eau.
 2. **Given** une exécution en cours, **When** le membre demande l'arrêt, **Then** l'exécution
    s'interrompt proprement et la trace indique qu'elle a été arrêtée manuellement.
-3. **Given** une exécution qui atteint sa limite d'itérations, de durée ou de budget, **When** la
+3. **Given** une exécution qui atteint sa limite d'itérations, de durée ou de tokens, **When** la
    limite est dépassée, **Then** l'exécution s'arrête et la trace indique quelle limite a été
    atteinte.
 4. **Given** un agent qui tente d'utiliser un outil non autorisé, **When** l'appel est demandé,
@@ -209,6 +209,8 @@ l'agent de l'autre selon ses droits, et qu'une action non permise par son rôle 
 
 - **FR-001**: Les membres DOIVENT pouvoir créer, modifier, dupliquer et supprimer un agent défini
   par un nom, des instructions, une liste d'outils autorisés et des limites d'exécution.
+- **FR-001a**: Tout membre du groupe PEUT consulter, lancer et dupliquer un agent du groupe ;
+  seuls son auteur et les administrateurs du groupe PEUVENT le modifier ou le supprimer.
 - **FR-002**: Une exécution DOIT pouvoir être lancée sur une tâche décrite en texte libre de deux
   façons : à la main par un membre, ou par un programme externe (script, intégration continue)
   authentifié au nom d'un membre ou d'un compte de service du groupe. Le lancement planifié et le
@@ -218,8 +220,8 @@ l'agent de l'autre selon ses droits, et qu'une action non permise par son rôle 
   attribués, est soumis à ses propres quotas et NE PEUT PAS approuver une action à effet externe.
 - **FR-002b**: Un programme externe DOIT pouvoir suivre l'état d'une exécution qu'il a lancée,
   l'arrêter et en récupérer le résultat et la trace.
-- **FR-003**: Chaque exécution DOIT avoir des limites explicites (nombre d'itérations, durée,
-  budget de coût) ; le dépassement d'une limite DOIT arrêter l'exécution proprement.
+- **FR-003**: Chaque exécution DOIT avoir des limites explicites : nombre d'itérations, durée et
+  nombre de tokens consommés ; le dépassement d'une limite DOIT arrêter l'exécution proprement.
 - **FR-003a**: Si la plateforme s'interrompt (panne, redémarrage, mise à jour), toute exécution en
   cours DOIT être marquée « interrompue » avec sa trace conservée jusqu'à l'interruption, et un
   membre DOIT pouvoir la relancer de zéro sur la même tâche. Une exécution interrompue NE DOIT
@@ -236,12 +238,24 @@ l'agent de l'autre selon ses droits, et qu'une action non permise par son rôle 
 - **FR-005a**: Chaque outil du catalogue DOIT être classé « lecture seule » ou « à effet externe »
   par un gestionnaire d'outils ; un outil non classé DOIT être traité comme « à effet externe ».
   Pour un serveur MCP, la classification s'applique à chacun des outils qu'il expose.
+  Exception : une skill est classée « lecture seule » d'office, car la plateforme n'en exécute
+  jamais les scripts (FR-012a) ; les outils internes suivent FR-006a.
 - **FR-005b**: Seuls peuvent approuver ou refuser une demande d'approbation : le membre qui a
   lancé l'exécution, ou un membre ayant le rôle « approbateur » dans le groupe. Pour une exécution
   lancée par un compte de service, seul un approbateur le peut. Les personnes habilitées DOIVENT
   être notifiées de la demande, et la décision DOIT être consignée dans la trace avec son auteur.
 - **FR-006**: Un agent NE DOIT utiliser que les outils explicitement autorisés pour lui ; tout
   appel à un autre outil DOIT être refusé et consigné.
+- **FR-006a**: En plus des outils du catalogue, un agent dispose d'une liste fixe d'**outils
+  internes** :
+  - lecture : `ls`, `read_file`, `glob`, `grep`, toujours accordés ;
+  - écriture : `write_file`, `edit_file`, `delete`, limités à l'espace de travail éphémère de
+    l'exécution et, si elle est activée, à la mémoire d'agent ; jamais à la mémoire de groupe ni
+    aux skills ;
+  - délégation : `task` (sous-agent), désactivé par défaut et activable par agent.
+  Les outils internes sont classés « lecture seule » car ils n'ont aucun effet hors de la
+  plateforme. Leur liste effective DOIT figurer dans la configuration figée de l'exécution et dans
+  sa trace ; tout autre outil intégré au framework d'exécution DOIT être retiré.
 
 **Traces et observabilité**
 
@@ -278,8 +292,10 @@ l'agent de l'autre selon ses droits, et qu'une action non permise par son rôle 
 
 - **FR-015**: Un agent avec mémoire activée DOIT pouvoir créer, lire et mettre à jour des entrées
   de mémoire persistant d'une exécution à l'autre, chacune rattachée à sa source.
-- **FR-016**: Les membres autorisés DOIVENT pouvoir consulter, modifier et supprimer les entrées de
-  mémoire ; chaque modification DOIT être historisée.
+- **FR-016**: La mémoire d'agent DOIT pouvoir être consultée par tout membre qui peut lancer
+  l'agent, et modifiée ou supprimée par l'auteur de l'agent ou un administrateur du groupe ; la
+  mémoire de groupe DOIT pouvoir être consultée par tout membre, et modifiée ou supprimée par un
+  gestionnaire de la mémoire de groupe. Chaque modification DOIT être historisée.
 - **FR-017**: La mémoire DOIT exister à deux niveaux :
   - une **mémoire d'agent**, propre à chaque agent : un agent n'accède jamais à la mémoire d'un
     autre agent ; elle est partagée par tous les membres du groupe qui peuvent lancer cet agent ;
@@ -312,8 +328,10 @@ l'agent de l'autre selon ses droits, et qu'une action non permise par son rôle 
   (agents, mémoires, traces) sans y avoir été ajouté comme membre.
 - **FR-022b**: Une même personne PEUT appartenir à plusieurs groupes, avec un rôle distinct dans
   chacun ; elle DOIT toujours savoir dans quel groupe elle agit.
-- **FR-023**: Les administrateurs DOIVENT pouvoir définir des quotas d'exécution et de coût par
-  membre ; une exécution qui dépasserait le quota DOIT être refusée.
+- **FR-023**: Les administrateurs DOIVENT pouvoir définir, par membre et par compte de service, un
+  nombre maximal d'exécutions simultanées et de tokens consommés par jour ; une exécution qui
+  dépasserait le quota DOIT être refusée. Si un tarif par token est configuré, la plateforme
+  affiche le coût correspondant à titre informatif.
 - **FR-024**: Toute action d'administration (ajout ou retrait de membre, changement de rôle,
   modification du catalogue) DOIT être journalisée avec son auteur et sa date.
 
@@ -323,8 +341,9 @@ l'agent de l'autre selon ses droits, et qu'une action non permise par son rôle 
   traces ; la plateforme en héberge plusieurs.
 - **Membre**: appartenance d'une personne à un groupe, avec un rôle et des quotas propres à ce
   groupe ; une personne peut être membre de plusieurs groupes.
-- **Agent**: configuration réutilisable : nom, instructions, outils autorisés, limites, mémoire
-  d'agent activée ou non, accès à la mémoire de groupe activé ou non, auteur.
+- **Agent**: configuration réutilisable : nom, instructions, outils autorisés, sous-agents activés
+  ou non, limites, mémoire d'agent activée ou non, accès à la mémoire de groupe activé ou non,
+  auteur.
 - **Exécution**: lancement d'un agent sur une tâche ; statut, déclencheur (membre ou compte de
   service) et mode de lancement (manuel ou programmatique), limites appliquées, coût, motif d'arrêt.
 - **Compte de service**: identité non humaine d'un groupe utilisée par un programme externe pour
@@ -377,12 +396,13 @@ l'agent de l'autre selon ses droits, et qu'une action non permise par son rôle 
 - Les membres accèdent à la plateforme depuis un navigateur ; les programmes externes passent par
   un accès programmatique authentifié. Une interface en ligne de commande dédiée peut venir plus
   tard et n'est pas requise ici.
-- Les traces et la mémoire sont conservées 90 jours par défaut, durée réglable par un
-  administrateur.
+- Les traces et l'historique des révisions de mémoire sont conservés 90 jours par défaut, durée
+  réglable par un administrateur ; les entrées de mémoire elles-mêmes sont conservées tant
+  qu'elles ne sont pas supprimées.
 - Le délai d'attente d'approbation est de 24 heures et le délai d'expiration d'une proposition de
   mémoire de groupe de 30 jours par défaut ; les deux sont réglables par un administrateur du
   groupe.
 - Le format des skills, des hooks et des serveurs MCP suit les conventions publiques en usage
   dans l'écosystème des agents, sans format propriétaire.
-- La facturation des coûts aux membres est hors périmètre ; la plateforme mesure et limite les
-  coûts mais ne les facture pas.
+- La facturation des coûts aux membres est hors périmètre ; la plateforme limite les tokens
+  consommés et peut afficher un coût dérivé, mais ne facture rien.

@@ -45,15 +45,20 @@ TypeScript. Les versions citées sont celles publiées sur PyPI au 2026-10-21.
   - `model` : fourni par `ModelProvider` ;
   - `tools` : **uniquement** les outils autorisés pour l'agent (MCP chargés via
     `MultiServerMCPClient`, plus l'outil interne `propose_group_memory`) ;
-  - `skills` : les répertoires de skills autorisées, servis en lecture seule depuis le store ;
+  - `skills` : les répertoires de skills autorisées, servis en lecture seule par `SqlBackend` (R-06) ;
   - `memory` / `backend` : `CompositeBackend` (R-06) ;
   - `interrupt_on` : construit depuis la classification du catalogue (R-05) ;
   - `middleware` : allowlist, hooks, budget, trace, masquage (R-04) ;
-  - `checkpointer` et `store` PostgreSQL (R-07).
+  - `checkpointer` PostgreSQL (R-07) ; pas de `store` LangGraph.
 - **Rationale**: une seule fonction pure et testable relie la configuration à l'exécution ; un
   test unitaire peut vérifier qu'un outil non autorisé n'est jamais lié.
-- **Sous-agents**: le sous-agent généraliste de Deep Agents hérite des mêmes outils, middlewares
-  et `interrupt_on` que l'agent parent ; aucune voie de contournement des contrôles.
+- **Outils internes (FR-006a)**: un `FilesystemMiddleware` explicite avec la liste blanche `ls`,
+  `read_file`, `glob`, `grep`, `write_file`, `edit_file`, `delete` (Deep Agents impose
+  `read_file`). Le sous-agent généraliste (`task`) n'est ajouté que si `subagents_enabled` vaut
+  vrai ; il hérite alors des mêmes outils, middlewares et `interrupt_on` que l'agent parent.
+  `write_todos` et `execute` ne sont pas activés (pas de `TodoListMiddleware`, pas de backend
+  sandbox). Le middleware allowlist accepte l'union des opérations du catalogue autorisées et
+  des outils internes effectifs, listés dans `run_started`.
 
 ## R-04 Points de contrôle : middlewares
 
@@ -86,27 +91,34 @@ TypeScript. Les versions citées sont celles publiées sur PyPI au 2026-10-21.
 
 ## R-06 Mémoire d'agent et mémoire de groupe
 
-- **Decision**: `CompositeBackend` avec trois routes :
-  - `/memories/` → `StoreBackend`, espace de noms `(group_id, "agent", agent_id)`, lecture et
-    écriture : mémoire d'agent (FR-017) ;
-  - `/group-memory/` → `StoreBackend`, espace de noms `(group_id, "group")`, **lecture seule**
-    pour l'agent (règle de permission) : mémoire de groupe ;
+- **Decision**: un backend Deep Agents maison, `SqlBackend`, implémente le protocole de backend
+  et lit / écrit dans les tables `MemoryEntry` / `MemoryRevision` (et `Tool.files` pour les
+  skills) via la session SQL du groupe, donc **sous Row-Level Security**. Il est la seule source
+  de vérité de la mémoire. `CompositeBackend` route :
+  - `/memories/` → `SqlBackend`, entrées `scope = agent` de l'agent courant, lecture et écriture
+    (FR-017) ;
+  - `/group-memory/` → `SqlBackend`, entrées `scope = group`, **lecture seule** pour l'agent ;
+  - `/skills/` → `SqlBackend`, fichiers des skills autorisées, lecture seule ;
   - défaut → `StateBackend` : fichiers de travail éphémères de l'exécution.
   L'agent ne peut qu'appeler l'outil `propose_group_memory`, qui crée une
   `GroupMemoryProposal` en attente ; seule la validation par un gestionnaire de la mémoire de
-  groupe écrit dans `/group-memory/` (FR-017a). Chaque écriture passe par un service qui
-  historise la version précédente (FR-016) et émet un événement de trace avec l'origine de
-  l'entrée (FR-017b).
-- **Rationale**: réutilise la mémoire native de Deep Agents ; l'isolation par groupe et par agent
-  tient à l'espace de noms, et l'écriture dans la mémoire de groupe est impossible par construction.
+  groupe écrit dans `/group-memory/` (FR-017a). Chaque écriture historise la version précédente
+  (FR-016) et émet un événement de trace avec l'origine de l'entrée (FR-017b).
+- **Rationale**: réutilise le mécanisme de mémoire de Deep Agents (fichiers chargés via
+  `memory`) avec une seule source de vérité ; l'isolation par groupe repose sur la RLS, alors que
+  les tables du store LangGraph n'en ont pas. L'écriture dans la mémoire de groupe est impossible
+  par construction.
+- **Alternatives considered**: `StoreBackend` + `PostgresStore` (deux sources de vérité à
+  synchroniser et pas de RLS sur le store).
 - **Concurrence**: écriture avec contrôle de version optimiste ; un conflit est consigné et
   visible dans l'historique, aucune écriture n'est perdue (cas limite de la spec).
 
 ## R-07 Persistance
 
-- **Decision**: PostgreSQL 16. Données métier via SQLAlchemy 2 async + Alembic ; checkpoints
-  (`AsyncPostgresSaver`) et store LangGraph via `langgraph-checkpoint-postgres` 3.2.0, dans un
-  schéma `langgraph` distinct. Isolation : colonne `group_id` sur toutes les tables métier et
+- **Decision**: PostgreSQL 16. Données métier, mémoire et skills via SQLAlchemy 2 async + Alembic ;
+  seuls les checkpoints (`AsyncPostgresSaver` de `langgraph-checkpoint-postgres` 3.2.0) vivent
+  dans un schéma `langgraph` distinct, chaque `thread_id` étant rattaché à un `Run` du groupe ; le
+  store LangGraph n'est pas utilisé. Isolation : colonne `group_id` sur toutes les tables métier et
   politiques Row-Level Security activées avec `SET LOCAL app.group_id` à chaque transaction.
 - **Rationale**: une seule base pour tout (principe III) ; RLS donne une seconde barrière
   d'isolation (SC-009).
@@ -129,6 +141,8 @@ TypeScript. Les versions citées sont celles publiées sur PyPI au 2026-10-21.
 
 - **Authentification**: OIDC (SSO de l'organisation) via Authlib pour les membres ; comptes de
   service authentifiés par jeton opaque, stocké haché (SHA-256 + sel), révocable (FR-002a).
+  En développement et en test, l'IdP OIDC est Dex (`ghcr.io/dexidp/dex:v2.41.1`) avec des
+  utilisateurs statiques ; en production, l'IdP de l'organisation.
 - **Autorisation**: rôles par appartenance à un groupe (administrateur, gestionnaire d'outils,
   gestionnaire de la mémoire de groupe, approbateur, membre), vérifiés dans une dépendance FastAPI
   unique ; l'administrateur de plateforme ne lit pas le contenu des groupes (FR-022a).

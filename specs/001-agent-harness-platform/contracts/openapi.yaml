@@ -274,7 +274,7 @@ paths:
   /groups/{groupId}/approvals:
     parameters: [{ $ref: "#/components/parameters/groupId" }]
     get:
-      summary: Demandes d'approbation que l'appelant peut traiter
+      summary: Demandes d'approbation que l'appelant peut traiter (plus, pour un admin, celles marquées no_eligible_approver)
       parameters:
         - { name: status, in: query, schema: { type: string, enum: [pending, approved, rejected, expired] } }
       responses:
@@ -508,6 +508,7 @@ components:
         allowed_tool_ids: { type: array, items: { type: string, format: uuid } }
         agent_memory_enabled: { type: boolean, default: true }
         group_memory_enabled: { type: boolean, default: false }
+        subagents_enabled: { type: boolean, default: false, description: "Active l'outil interne task (FR-006a)" }
         limits:
           type: object
           required: [max_iterations, max_duration_seconds, max_tokens]
@@ -565,6 +566,7 @@ components:
         status: { type: string, enum: [pending, approved, rejected, expired] }
         requested_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
+        no_eligible_approver: { type: boolean, description: "Aucune personne habilitée : visible en lecture par les admins du groupe" }
         decided_by: { type: [string, "null"], format: uuid }
     MemoryEntryInput:
       type: object

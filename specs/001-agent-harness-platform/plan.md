@@ -12,8 +12,8 @@ Approche technique : un backend Python unique (API FastAPI + moteur d'exécution
 chaque agent avec **Deep Agents** (harnais open source de LangChain, basé sur LangGraph) et un
 modèle **local servi par Ollama**. Les points de contrôle exigés par la spec (outils autorisés,
 approbation humaine, hooks, budgets, traces) sont des middlewares LangChain branchés sur l'agent ;
-l'état des exécutions et la mémoire vivent dans PostgreSQL via le checkpointer et le store
-LangGraph. Une SPA React suit les exécutions en temps réel par flux SSE. Le tout est livré en
+l'état des exécutions vit dans PostgreSQL via le checkpointer LangGraph, et la mémoire dans des
+tables SQL exposées à l'agent par un backend dédié. Une SPA React suit les exécutions en temps réel par flux SSE. Le tout est livré en
 conteneurs (docker compose en développement). Détails et alternatives : [research.md](research.md).
 
 ## Technical Context
@@ -23,14 +23,14 @@ conteneurs (docker compose en développement). Détails et alternatives : [resea
 **Primary Dependencies**:
 - Exécution d'agents : `deepagents` 0.7.29 (sur `langchain` 1.x / `langgraph`), `langchain-ollama`
   1.1.0, `langchain-mcp-adapters` 0.3.2 (client MCP), `langgraph-checkpoint-postgres` 3.2.0
-  (checkpointer + store PostgreSQL)
+  (checkpointer PostgreSQL)
 - API : FastAPI, Pydantic 2, SQLAlchemy 2 (async) + Alembic, `sse-starlette`, Authlib (OIDC),
   `cryptography` (chiffrement des identifiants), `structlog`, `httpx`
 - Frontend : React 18, Vite, TanStack Query, React Router
 - Toutes les versions sont épinglées dans `uv.lock` et `package-lock.json` (principe II)
 
-**Storage**: PostgreSQL 16 : données métier (SQLAlchemy), checkpoints et store LangGraph
-(schéma séparé). Isolation par groupe via `group_id` + Row-Level Security.
+**Storage**: PostgreSQL 16 : données métier, mémoire et skills (SQLAlchemy), checkpoints
+LangGraph (schéma séparé). Isolation par groupe via `group_id` + Row-Level Security.
 
 **Testing**: pytest, pytest-asyncio, httpx `AsyncClient`, testcontainers (PostgreSQL réel) ;
 modèles simulés `GenericFakeChatModel` de `langchain-core` (aucun appel au modèle en test
@@ -107,7 +107,7 @@ backend/
 │   │   ├── middleware/          # allowlist, hooks, budget, trace, redaction
 │   │   ├── runner.py            # Lancement, arrêt, reprise, récupération au démarrage
 │   │   └── approvals.py         # Demandes d'approbation et reprise (FR-005b, FR-003b)
-│   ├── memory/                  # Backends mémoire d'agent / groupe, propositions
+│   ├── memory/                  # SqlBackend (mémoire d'agent / groupe, skills), propositions
 │   ├── traces/                  # Écriture, lecture, filtres, flux SSE
 │   └── api/                     # Routes REST par domaine
 ├── tests/
