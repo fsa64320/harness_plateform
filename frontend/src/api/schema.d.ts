@@ -1459,6 +1459,8 @@ export interface components {
             id?: string;
             /** Format: uuid */
             group_id?: string;
+            /** @description Nom du groupe, affiché en permanence (FR-022b) */
+            group_name?: string;
             person_email?: string;
             roles?: components["schemas"]["Role"][];
             max_concurrent_runs?: number;

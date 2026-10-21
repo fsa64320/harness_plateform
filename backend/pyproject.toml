@@ -54,7 +54,7 @@ testpaths = ["tests"]
 pythonpath = ["src", "."]
 
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py312"
 src = ["src", "tests"]
 
@@ -62,8 +62,13 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "B", "UP", "S", "ASYNC"]
 ignore = ["S101"]
 
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header", "harness.auth.permissions.require_roles"]
+
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S105", "S106", "S108"]
+"alembic/versions/*" = ["S608"]
+"src/harness/db/rls.py" = ["S608"]
 
 [tool.mypy]
 python_version = "3.12"

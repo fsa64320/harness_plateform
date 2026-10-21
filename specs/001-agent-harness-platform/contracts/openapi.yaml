@@ -425,6 +425,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         group_id: { type: string, format: uuid }
+        group_name: { type: string, description: "Nom du groupe, affiché en permanence (FR-022b)" }
         person_email: { type: string }
         roles: { type: array, items: { $ref: "#/components/schemas/Role" } }
         max_concurrent_runs: { type: integer }
