@@ -91,6 +91,14 @@ async def clean_db(owner_engine: AsyncEngine) -> AsyncIterator[None]:
     names = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
     async with owner_engine.begin() as conn:
         await conn.execute(text(f"TRUNCATE TABLE {names} RESTART IDENTITY CASCADE"))
+        # Checkpoints LangGraph (schéma `langgraph`) : absents tant que le checkpointer n'est pas ouvert.
+        exists = (
+            await conn.execute(text("SELECT to_regclass('langgraph.checkpoints') IS NOT NULL"))
+        ).scalar()
+        if exists:
+            await conn.execute(
+                text("TRUNCATE TABLE langgraph.checkpoint_writes, langgraph.checkpoint_blobs, langgraph.checkpoints")
+            )
     yield
 
 
@@ -139,13 +147,58 @@ class Actor:
     headers: dict[str, str] = field(default_factory=dict)
 
 
-@pytest_asyncio.fixture
-async def app(migrated_db: dict[str, str], clean_db: None) -> FastAPI:
-    from harness.main import create_app
+@pytest_asyncio.fixture(scope="session")
+async def checkpointer(migrated_db: dict[str, str]) -> AsyncIterator[Any]:
+    """Checkpointer LangGraph PostgreSQL réel (schéma `langgraph`), comme en production."""
+    from harness.runtime.persistence import open_checkpointer
 
-    application = create_app()
+    async with open_checkpointer(migrated_db["app"], owner_url=migrated_db["owner"]) as saver:
+        yield saver
+
+
+class FakeModels:
+    """Script de réponses du faux modèle, consommé dans l'ordre (y compris à la reprise d'une
+    exécution après approbation). `per_run` donne au contraire un script neuf à chaque exécution."""
+
+    def __init__(self) -> None:
+        from harness.runtime.models import FakeProvider
+
+        self.provider = FakeProvider([])
+
+    def set(self, *steps: Any) -> None:
+        self.provider.use(list(steps))
+
+    def per_run(self, factory: Callable[[], Any]) -> None:
+        self.provider.use_factory(factory)
+
+
+@pytest.fixture
+def fake_models() -> FakeModels:
+    return FakeModels()
+
+
+@pytest_asyncio.fixture
+async def app(
+    migrated_db: dict[str, str], clean_db: None, checkpointer: Any, fake_models: FakeModels
+) -> AsyncIterator[FastAPI]:
+    from harness.main import attach_services, create_app
+
+    application = create_app(with_lifespan=False)
     install_auth_override(application)
-    return application
+    attach_services(application, provider=fake_models.provider, checkpointer=checkpointer)
+    yield application
+    await application.state.runner.abandon_all()
+
+
+@pytest.fixture
+def mcp_server(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
+    """Serveur MCP HTTPS de test ; son certificat est reconnu via SSL_CERT_FILE."""
+    from tests.fixtures.mcp_test_server import McpTestServer
+
+    server = McpTestServer().start()
+    monkeypatch.setenv("SSL_CERT_FILE", str(server.cert_path))
+    yield server
+    server.close()
 
 
 @pytest_asyncio.fixture

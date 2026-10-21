@@ -1,9 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { Navigate, Route, Routes, useMatch } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useMatch } from "react-router-dom";
 
 import { api, ApiError, LOGIN_URL, type Schemas } from "./api/client";
+import ApprovalBadge from "./components/ApprovalBadge";
 import GroupSwitcher from "./components/GroupSwitcher";
+import AgentsPage from "./pages/AgentsPage";
+import ApprovalsPage from "./pages/ApprovalsPage";
+import RunPage from "./pages/RunPage";
+import RunsPage from "./pages/RunsPage";
 
 export const useMe = () =>
   useQuery({
@@ -32,6 +37,12 @@ export default function App() {
       <header>
         <strong>Plateforme de harnais d'agents</strong>{" "}
         <GroupSwitcher memberships={memberships} currentGroupId={groupId} /> <span>{me.email}</span>
+        {groupId && (
+          <nav>
+            <Link to={`/g/${groupId}/agents`}>Agents</Link>{" "}
+            <Link to={`/g/${groupId}/runs`}>Exécutions</Link> <ApprovalBadge groupId={groupId} />
+          </nav>
+        )}
       </header>
       <main>
         <Routes>
@@ -39,6 +50,10 @@ export default function App() {
             path="/"
             element={first ? <Navigate to={`/g/${first.group_id}/agents`} replace /> : null}
           />
+          <Route path="/g/:groupId/agents" element={<AgentsPage />} />
+          <Route path="/g/:groupId/runs" element={<RunsPage />} />
+          <Route path="/g/:groupId/runs/:runId" element={<RunPage />} />
+          <Route path="/g/:groupId/approvals" element={<ApprovalsPage />} />
         </Routes>
       </main>
     </>

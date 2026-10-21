@@ -112,6 +112,7 @@ class ScriptedChatModel(BaseChatModel):
     _steps: list[Step] = PrivateAttr(default_factory=list)
     _cursor: int = PrivateAttr(default=0)
     _seen: list[list[BaseMessage]] = PrivateAttr(default_factory=list)
+    _bound: list[list[str]] = PrivateAttr(default_factory=list)
 
     def __init__(self, steps: Sequence[Step]) -> None:
         super().__init__()
@@ -126,7 +127,17 @@ class ScriptedChatModel(BaseChatModel):
         """Messages reçus à chaque appel : permet de vérifier ce que le modèle a vu."""
         return self._seen
 
+    @property
+    def bound_tool_names(self) -> list[list[str]]:
+        """Noms des outils liés au modèle, à chaque `bind_tools` : ce que le modèle peut appeler."""
+        return self._bound
+
     def bind_tools(self, tools: Any, **kwargs: Any) -> ScriptedChatModel:
+        names = [
+            t.get("name") or t.get("function", {}).get("name", "") if isinstance(t, dict) else t.name
+            for t in tools
+        ]
+        self._bound.append(names)
         return self
 
     def _next(self, messages: list[BaseMessage]) -> Step:
@@ -163,9 +174,10 @@ class ScriptedChatModel(BaseChatModel):
 
 
 class FakeProvider:
-    """Fournisseur de test. `script` est consommé dans l'ordre par tous les modèles créés ;
-    `factory` produit au contraire un script neuf à chaque `get_chat_model` (exécutions
-    concurrentes)."""
+    """Fournisseur de test. `script` est un script unique, consommé dans l'ordre par tous les modèles
+    créés : une exécution reprise après approbation continue donc là où elle s'était arrêtée.
+    `factory` produit au contraire un script neuf à chaque `get_chat_model` (exécutions concurrentes,
+    sans reprise)."""
 
     def __init__(
         self,
@@ -178,6 +190,13 @@ class FakeProvider:
         self._factory = factory
         self._tool_calling = tool_calling
         self.models: list[ScriptedChatModel] = []
+
+    def use(self, steps: Sequence[Step]) -> None:
+        """Remplace le script partagé (le suivant sera consommé depuis le début)."""
+        self._shared, self._factory = ScriptedChatModel(steps), None
+
+    def use_factory(self, factory: Callable[[], Sequence[Step]]) -> None:
+        self._factory = factory
 
     def get_chat_model(self, model_id: str) -> ScriptedChatModel:
         model = ScriptedChatModel(self._factory()) if self._factory else self._shared

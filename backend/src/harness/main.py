@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, FastAPI, HTTPException, Request
@@ -14,10 +15,15 @@ from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
 
 from harness import config
-from harness.api import me
+from harness.api import agents, approvals, me, runs, tools
 from harness.auth import oidc
 from harness.db import session as db_session
+from harness.runtime.models import ModelProvider, OllamaProvider
+from harness.runtime.persistence import open_checkpointer
+from harness.runtime.runner import Runner
+from harness.traces.bus import TraceBus
 from harness.traces.redaction import structlog_redactor
+from harness.traces.writer import SqlTraceStore, TraceWriter
 
 log = structlog.get_logger()
 
@@ -67,13 +73,43 @@ async def assert_rls_enforced() -> None:
         )
 
 
+def attach_services(app: FastAPI, *, provider: ModelProvider, checkpointer: Any) -> Runner:
+    """Branche les services partagés (fournisseur de modèle, trace, lanceur) sur l'application."""
+    settings = config.get_settings()
+    bus = TraceBus()
+    writer = TraceWriter(SqlTraceStore(db_session.get_sessionmaker()), bus)
+    app.state.model_provider = provider
+    app.state.trace_bus = bus
+    app.state.trace_writer = writer
+    app.state.runner = Runner(
+        db_session.get_sessionmaker(),
+        provider,
+        checkpointer,
+        writer,
+        global_limit=settings.global_max_concurrent_runs,
+        check_interval=settings.approval_check_interval_seconds,
+    )
+    return app.state.runner  # type: ignore[no-any-return]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = config.get_settings()
     db_session.init_engine(settings.database_url)
     await assert_rls_enforced()
     try:
-        yield
+        async with open_checkpointer(
+            settings.database_url, owner_url=settings.migration_database_url
+        ) as checkpointer:
+            runner = attach_services(
+                app, provider=OllamaProvider(settings.ollama_base_url), checkpointer=checkpointer
+            )
+            await runner.recover_on_startup()  # SC-011 : les exécutions en cours deviennent « interrompues »
+            runner.start_background()
+            try:
+                yield
+            finally:
+                await runner.shutdown()
     finally:
         await db_session.dispose_engine()
 
@@ -97,6 +133,10 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
 
     api = APIRouter(prefix="/api/v1")
     api.include_router(me.router)
+    api.include_router(tools.router)
+    api.include_router(agents.router)
+    api.include_router(runs.router)
+    api.include_router(approvals.router)
     api.include_router(oidc.router)
     app.include_router(api)
 

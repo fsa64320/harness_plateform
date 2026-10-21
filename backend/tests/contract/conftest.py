@@ -11,6 +11,8 @@ import pytest
 from openapi_core import OpenAPI
 from openapi_core.testing import MockRequest, MockResponse
 
+from tests.world_fixtures import world  # noqa: F401  (fixture partagée)
+
 SPEC_PATH = (
     Path(__file__).resolve().parents[3]
     / "specs"
@@ -36,9 +38,9 @@ def assert_matches_contract(openapi_spec: OpenAPI) -> Callable[[httpx.Response],
         path = parts.path
         assert path.startswith(API_PREFIX), f"chemin hors contrat : {path}"
         mock_request = MockRequest(
-            f"{parts.scheme}://{parts.netloc}{API_PREFIX}",
+            f"{parts.scheme}://{parts.netloc}",
             request.method.lower(),
-            path[len(API_PREFIX) :],
+            path,
             args=dict(httpx.QueryParams(parts.query)),
             headers=dict(request.headers),
             cookies=dict(request.headers.get("cookie", "") and {}),

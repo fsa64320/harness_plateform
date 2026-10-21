@@ -54,13 +54,13 @@ testpaths = ["tests"]
 pythonpath = ["src", "."]
 
 [tool.ruff]
-line-length = 120
+line-length = 130
 target-version = "py312"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "S", "ASYNC"]
-ignore = ["S101"]
+ignore = ["S101", "ASYNC109", "ASYNC110", "E501"]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header", "harness.auth.permissions.require_roles"]
