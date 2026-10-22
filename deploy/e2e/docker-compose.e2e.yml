@@ -1,0 +1,9 @@
+# Surcharge de validation (T129) : le backend fait confiance aux certificats auto-signés des serveurs de
+# test lancés sur l'hôte. À utiliser avec ../docker-compose.yml ; `ca/` est généré par run_quickstart.py.
+services:
+  backend:
+    environment:
+      SSL_CERT_FILE: /e2e/ca.pem
+      HARNESS_ALLOW_PRIVATE_NETWORKS: "true"  # les serveurs de test sont joints via host.docker.internal
+    volumes:
+      - ./e2e/ca:/e2e:ro  # chemin relatif au fichier compose de base (deploy/)

@@ -1,0 +1,82 @@
+[project]
+name = "harness"
+version = "0.1.0"
+description = "Plateforme de harnais d'agents (backend API + moteur d'exécution)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "deepagents==0.7.29",
+  "langchain-ollama==1.1.0",
+  "langchain-mcp-adapters==0.3.2",
+  "langgraph-checkpoint-postgres==3.2.0",
+  "fastapi",
+  "uvicorn",
+  "pydantic>=2",
+  "pydantic-settings",
+  "sqlalchemy[asyncio]>=2",
+  "psycopg[binary,pool]>=3",
+  "alembic",
+  "sse-starlette",
+  "authlib",
+  "itsdangerous",
+  "cryptography",
+  "structlog",
+  "httpx",
+  "pyyaml",
+]
+
+[project.scripts]
+harness-admin = "harness.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest",
+  "pytest-asyncio",
+  "testcontainers[postgres]",
+  "openapi-core",
+  "ruff",
+  "mypy",
+  "types-pyyaml",
+  "pip-audit",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/harness"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+
+[tool.ruff]
+line-length = 130
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "ASYNC"]
+ignore = ["S101", "ASYNC109", "ASYNC110", "ASYNC240", "E501"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header", "harness.auth.permissions.require_roles"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S108"]
+"alembic/versions/*" = ["S608"]
+"src/harness/db/rls.py" = ["S608"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+plugins = ["pydantic.mypy"]
+files = ["src/harness"]
+
+[[tool.mypy.overrides]]
+module = ["authlib.*", "deepagents.*", "langchain_mcp_adapters.*", "testcontainers.*", "openapi_core.*"]
+ignore_missing_imports = true

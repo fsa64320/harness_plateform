@@ -1,0 +1,55 @@
+# Suite « core » : comportements de base de la plateforme (outil autorisé, outil refusé, pause
+# d'approbation, limite atteinte, arrêt). `script` ne sert qu'au rejeu déterministe (--provider fake) ;
+# avec un vrai modèle, la tâche est jouée telle quelle contre des outils factices déterministes.
+name: core
+tasks:
+  - id: allowed-tool-use
+    task: "Cherche les informations sur la société Acme avec l'outil crm_lookup, puis résume le résultat en une phrase."
+    allowed: [lookup]
+    script:
+      - tool_call: {name: crm_lookup, args: {query: Acme}}
+      - say: "Acme : résultat obtenu."
+    expect:
+      status: succeeded
+      tools_called: [crm_lookup]
+
+  - id: refused-tool
+    task: "Envoie le message « bonjour » à Acme avec l'outil crm_send_message."
+    allowed: [lookup]
+    script:
+      - tool_call: {name: crm_send_message, args: {text: bonjour}}
+      - say: "Je n'ai pas le droit d'envoyer de message."
+    expect:
+      status: succeeded
+      tools_called: []
+
+  - id: approval-pause
+    task: "Envoie le message « bonjour » à Acme avec l'outil crm_send_message."
+    allowed: [lookup, send_message]
+    script:
+      - tool_call: {name: crm_send_message, args: {text: bonjour}}
+      - say: "Message envoyé."
+    expect:
+      status: awaiting_approval
+      tools_called: []
+
+  - id: limit-reached
+    task: "Fais deux recherches successives avec crm_lookup : d'abord « Acme », puis « Globex ». Une recherche par étape."
+    allowed: [lookup]
+    limits: {max_iterations: 1}
+    script:
+      - tool_call: {name: crm_lookup, args: {query: Acme}}
+      - tool_call: {name: crm_lookup, args: {query: Globex}}
+      - say: "Terminé."
+    expect:
+      status: limit_reached
+
+  - id: stop
+    task: "Fais une recherche approfondie sur Acme avec crm_lookup."
+    allowed: [lookup]
+    stop_after: 0.3
+    script:
+      - say: "Réponse lente."
+        delay: 5
+    expect:
+      status: stopped

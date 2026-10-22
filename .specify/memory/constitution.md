@@ -72,8 +72,19 @@ sans que personne ne s'en aperçoive.
 
 ## Contraintes de sécurité et d'exécution des agents
 
-- La stack technique n'est pas encore fixée ; son choix DOIT faire l'objet d'un amendement de
-  cette constitution, qui précisera langage, gestionnaire de dépendances et outillage de test.
+- Stack de référence (amendement 1.1.0) ; en sortir DOIT faire l'objet d'un nouvel amendement :
+  - backend : Python 3.12, dépendances gérées et verrouillées par `uv` ; API FastAPI ;
+    exécution d'agents avec Deep Agents (`deepagents`) sur LangChain / LangGraph ;
+  - modèles : servis en local par Ollama, derrière une interface de fournisseur remplaçable ;
+  - persistance : PostgreSQL, y compris checkpoints et mémoire LangGraph ;
+  - frontend : React et TypeScript en mode strict, dépendances verrouillées par `npm` ;
+  - tests : pytest (backend) et vitest (frontend) ; livraison en conteneurs, sans dépendance à un
+    fournisseur cloud particulier.
+- La plateforme NE DOIT exécuter aucun code fourni par un membre (hook, skill ou autre) ; les
+  serveurs MCP DOIVENT être joints par un transport distant, jamais lancés comme processus local.
+- Aucune donnée NE DOIT quitter l'infrastructure par défaut : la télémétrie des bibliothèques
+  tierces (dont LangSmith) DOIT être désactivée, et seuls les serveurs MCP et services de hooks
+  enregistrés par un groupe reçoivent des données.
 - Les identifiants de modèles DOIVENT être configurables et non codés en dur dans la logique
   métier.
 - Les fournisseurs de LLM, serveurs MCP et outils externes DOIVENT être appelés derrière une
@@ -108,4 +119,4 @@ sans que personne ne s'en aperçoive.
 - La conformité est revue à chaque PR et la constitution est relue à chaque changement de stack
   ou d'architecture majeur.
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-21 | **Last Amended**: 2026-10-21
+**Version**: 1.1.0 | **Ratified**: 2026-10-21 | **Last Amended**: 2026-10-21
