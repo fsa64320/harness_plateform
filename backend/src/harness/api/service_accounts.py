@@ -8,9 +8,8 @@ from typing import Annotated, Any
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from harness.auth.permissions import GroupAccess, require_roles
+from harness.auth.permissions import GroupAccess, GroupSessionDep, require_roles
 from harness.db.models.identity import ServiceAccount
-from harness.db.session import SessionDep
 from harness.groups import service
 
 router = APIRouter(prefix="/groups/{group_id}/service-accounts", tags=["service-accounts"])
@@ -38,12 +37,12 @@ def account_out(a: ServiceAccount) -> dict[str, Any]:
 
 
 @router.get("")
-async def list_accounts(access: AdminDep, session: SessionDep) -> list[dict[str, Any]]:
+async def list_accounts(access: AdminDep, session: GroupSessionDep) -> list[dict[str, Any]]:
     return [account_out(a) for a in await service.list_service_accounts(session)]
 
 
 @router.post("", status_code=201)
-async def create_account(body: ServiceAccountCreate, access: AdminDep, session: SessionDep) -> dict[str, Any]:
+async def create_account(body: ServiceAccountCreate, access: AdminDep, session: GroupSessionDep) -> dict[str, Any]:
     try:
         account, token = await service.create_service_account(
             session, access, name=body.name, allowed_agent_ids=body.allowed_agent_ids,
@@ -56,7 +55,7 @@ async def create_account(body: ServiceAccountCreate, access: AdminDep, session: 
 
 @router.post("/{service_account_id}/revoke", status_code=204)
 async def revoke(
-    service_account_id: uuid.UUID, request: Request, background: BackgroundTasks, access: AdminDep, session: SessionDep
+    service_account_id: uuid.UUID, request: Request, background: BackgroundTasks, access: AdminDep, session: GroupSessionDep
 ) -> Response:
     try:
         await service.revoke_service_account(session, access, service_account_id)

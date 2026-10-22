@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from harness.catalog.hook_rules import HookEventData
+from harness.net_policy import OutboundBlocked, assert_outbound_allowed
 from harness.traces.redaction import redact
 
 if TYPE_CHECKING:
@@ -87,6 +88,10 @@ async def call_webhook(
 
     if urlsplit(hook.url or "").scheme != "https":
         return blocked("insecure_url")
+    try:
+        await assert_outbound_allowed(hook.url or "")
+    except OutboundBlocked as exc:
+        return blocked("blocked_network", str(exc))
     body = json.dumps(build_body(data, ctx, [secret, *known_secrets]), ensure_ascii=False).encode()
     timestamp = str(int(time.time()))
     headers = {

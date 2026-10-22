@@ -53,6 +53,8 @@ def make_propose_tool(
             key = memory.normalize_path(path)
         except memory.MemoryPathInvalid as exc:
             return f"Proposition refusée : {exc}"
+        if len(content.encode()) > memory.MAX_CONTENT_BYTES:
+            return "Proposition refusée : contenu trop volumineux."
         async with txn() as session:
             proposal = GroupMemoryProposal(
                 group_id=group_id, run_id=run_id, agent_id=agent_id, proposed_path=key,

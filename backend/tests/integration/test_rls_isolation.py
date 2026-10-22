@@ -137,3 +137,33 @@ async def test_cannot_insert_into_another_group(clean_db: None, table: Table) ->
             async with s.begin():
                 await group_context(s, group_b)
                 await s.execute(table.insert().values(**values))
+
+
+async def test_every_table_with_a_group_id_column_is_protected_by_rls(session: AsyncSession) -> None:
+    """Complète la découverte par modèle : une table qui porterait `group_id` sans hériter de
+    `GroupScopedMixin` (donc sans test d'isolation) est repérée directement dans la base."""
+    unprotected = (
+        await session.execute(
+            text(
+                """
+                SELECT c.relname FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'group_id' AND NOT a.attisdropped
+                WHERE n.nspname = 'public' AND c.relkind = 'r' AND NOT (c.relrowsecurity AND c.relforcerowsecurity)
+                """
+            )
+        )
+    ).scalars().all()
+    assert unprotected == []
+    scoped = {t.name for t in _group_scoped_tables()}
+    in_db = set(
+        (
+            await session.execute(
+                text(
+                    "SELECT table_name FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND column_name = 'group_id'"
+                )
+            )
+        ).scalars()
+    )
+    assert in_db == scoped

@@ -13,4 +13,4 @@ COPY --from=build --chown=harness:harness /app /app
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
 USER harness
 EXPOSE 8000
-CMD ["sh", "-c", "alembic upgrade head && uvicorn harness.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "alembic upgrade head && uvicorn harness.main:create_app --factory --host 0.0.0.0 --port 8000"]

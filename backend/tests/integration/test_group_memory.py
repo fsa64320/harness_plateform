@@ -75,7 +75,7 @@ async def test_an_accepted_entry_is_readable_by_another_agent_with_group_memory_
     run = await world.launch(agent_id=reader["id"])
     await world.wait(run["id"])
     read = [e["payload"] for e in await world.events(run["id"]) if e["type"] == "memory_read"]
-    assert [(r["scope"], r["path"]) for r in read] == [("group", "faits/tarifs.md")]
+    assert {(r["scope"], r["path"]) for r in read} == {("group", "faits/tarifs.md")}  # chargée au lancement puis relue
     prompt = (await world.events(run["id"]))[0]["payload"]["system_prompt"]
     assert "/group-memory/" in prompt and "faits/tarifs.md" in prompt
 

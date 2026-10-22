@@ -1,5 +1,5 @@
 # IdP OIDC local de test uniquement (utilisateurs statiques). En production : IdP de l'organisation.
-issuer: http://localhost:5556/dex
+issuer: http://dex:5556/dex
 storage:
   type: memory
 web:
@@ -14,20 +14,21 @@ staticClients:
       - http://localhost:8000/api/v1/auth/callback
     secretEnv: OIDC_CLIENT_SECRET
 staticPasswords:
-  # hash bcrypt du mot de passe de test « password » (utilisateurs de test uniquement)
+  # hash bcrypt du mot de passe de test « password » (utilisateurs de test uniquement) :
+  # htpasswd -nbBC 10 x password | cut -d: -f2 | sed 's/^\$2y\$/$2a$/'
   - email: alice@example.test
-    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzT3vOPUJe8pBQGGJcNW"
+    hash: "$2a$10$hHHAueAmfbbWAyrvZkz3fOe.31Hnlur/h8HASVwVPRaMplJ64KAXe"
     username: alice
     userID: "00000000-0000-0000-0000-0000000000a1"
   - email: bob@example.test
-    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzT3vOPUJe8pBQGGJcNW"
+    hash: "$2a$10$hHHAueAmfbbWAyrvZkz3fOe.31Hnlur/h8HASVwVPRaMplJ64KAXe"
     username: bob
     userID: "00000000-0000-0000-0000-0000000000b2"
   - email: carol@example.test
-    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzT3vOPUJe8pBQGGJcNW"
+    hash: "$2a$10$hHHAueAmfbbWAyrvZkz3fOe.31Hnlur/h8HASVwVPRaMplJ64KAXe"
     username: carol
     userID: "00000000-0000-0000-0000-0000000000c3"
   - email: dan@example.test
-    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzT3vOPUJe8pBQGGJcNW"
+    hash: "$2a$10$hHHAueAmfbbWAyrvZkz3fOe.31Hnlur/h8HASVwVPRaMplJ64KAXe"
     username: dan
     userID: "00000000-0000-0000-0000-0000000000d4"

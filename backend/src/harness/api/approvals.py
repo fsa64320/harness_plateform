@@ -8,9 +8,8 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from harness.auth.permissions import GroupMemberDep
+from harness.auth.permissions import GroupMemberDep, GroupSessionDep
 from harness.db.models.runs import ApprovalRequest
-from harness.db.session import SessionDep
 from harness.runtime import approvals
 
 router = APIRouter(prefix="/groups/{group_id}/approvals", tags=["approvals"])
@@ -38,7 +37,7 @@ def approval_out(a: ApprovalRequest) -> dict[str, Any]:
 @router.get("")
 async def list_approvals(
     access: GroupMemberDep,
-    session: SessionDep,
+    session: GroupSessionDep,
     status: Annotated[Literal["pending", "approved", "rejected", "expired"] | None, Query()] = None,
 ) -> list[dict[str, Any]]:
     return [approval_out(a) for a in await approvals.list_visible(session, access, status)]

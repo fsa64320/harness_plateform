@@ -8,17 +8,18 @@ le contenu d'un groupe (FR-022a).
 from __future__ import annotations
 
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Annotated, Literal
 
 from fastapi import Depends, HTTPException, Request
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from harness.config import get_settings
 from harness.db.models.identity import Group, GroupStatus, Membership, MembershipStatus, Person
-from harness.db.session import SessionDep, group_context, person_context
+from harness.db.session import get_sessionmaker, group_context, person_context
 
 SESSION_COOKIE = "harness_session"
 SESSION_MAX_AGE_SECONDS = 8 * 3600
@@ -70,24 +71,28 @@ def _unauthenticated() -> HTTPException:
     return HTTPException(status_code=401, detail="Authentification requise")
 
 
-async def current_principal(request: Request, session: SessionDep) -> Principal:
-    """Identité de l'appelant : jeton de compte de service (`Authorization: Bearer`) ou session SSO."""
+async def current_principal(request: Request) -> Principal:
+    """Identité de l'appelant : jeton de compte de service (`Authorization: Bearer`) ou session SSO.
+
+    La vérification utilise sa propre transaction, aussitôt fermée : une requête ne garde jamais deux
+    connexions à la fois (sinon des requêtes simultanées pourraient s'interbloquer sur le pool)."""
     authorization = request.headers.get("authorization", "")
-    if authorization.lower().startswith("bearer "):
-        from harness.auth.service_accounts import authenticate_token
+    async with get_sessionmaker()() as session, session.begin():
+        if authorization.lower().startswith("bearer "):
+            from harness.auth.service_accounts import authenticate_token
 
-        return await authenticate_token(session, authorization[7:].strip())
+            return await authenticate_token(session, authorization[7:].strip())
 
-    cookie = request.cookies.get(SESSION_COOKIE)
-    person_id = read_session_cookie(cookie) if cookie else None
-    if person_id is None:
-        raise _unauthenticated()
-    person = await session.get(Person, person_id)
-    if person is None:
-        raise _unauthenticated()
-    return Principal(
-        kind="person", id=person.id, email=person.email, is_platform_admin=person.is_platform_admin
-    )
+        cookie = request.cookies.get(SESSION_COOKIE)
+        person_id = read_session_cookie(cookie) if cookie else None
+        if person_id is None:
+            raise _unauthenticated()
+        person = await session.get(Person, person_id)
+        if person is None:
+            raise _unauthenticated()
+        return Principal(
+            kind="person", id=person.id, email=person.email, is_platform_admin=person.is_platform_admin
+        )
 
 
 PrincipalDep = Annotated[Principal, Depends(current_principal)]
@@ -97,10 +102,15 @@ def _not_found() -> HTTPException:
     return HTTPException(status_code=404, detail="Ressource introuvable")
 
 
-async def group_member(group_id: uuid.UUID, principal: PrincipalDep, session: SessionDep) -> GroupAccess:
-    """Vérifie que l'appelant appartient au groupe de l'URL et ouvre le contexte RLS de ce groupe.
+async def group_member(group_id: uuid.UUID, principal: PrincipalDep) -> GroupAccess:
+    """Vérifie que l'appelant appartient au groupe de l'URL. Non-membre, appartenance retirée, groupe
+    désactivé ou inconnu : 404. Transaction propre et brève ; les routes qui lisent ou écrivent des données
+    du groupe déclarent `GroupSessionDep`, qui ouvre le contexte RLS de ce groupe."""
+    async with get_sessionmaker()() as session, session.begin():
+        return await _resolve_access(session, group_id, principal)
 
-    Non-membre, appartenance retirée, groupe désactivé ou inconnu : 404."""
+
+async def _resolve_access(session: AsyncSession, group_id: uuid.UUID, principal: Principal) -> GroupAccess:
     if principal.kind == "service_account":
         if principal.group_id != group_id:
             raise _not_found()
@@ -124,11 +134,20 @@ async def group_member(group_id: uuid.UUID, principal: PrincipalDep, session: Se
     ).first()
     if row is None or row.status != GroupStatus.ACTIVE:
         raise _not_found()
-    await group_context(session, group_id)
     return GroupAccess(principal, group_id, frozenset({*row.roles, "member"}), row.id)
 
 
 GroupMemberDep = Annotated[GroupAccess, Depends(group_member)]
+
+
+async def group_session(access: GroupMemberDep) -> AsyncIterator[AsyncSession]:
+    """Transaction de la requête, sous le contexte RLS du groupe de l'URL (validée avant la réponse)."""
+    async with get_sessionmaker()() as session, session.begin():
+        await group_context(session, access.group_id)
+        yield session
+
+
+GroupSessionDep = Annotated[AsyncSession, Depends(group_session, scope="function")]
 
 
 async def human_member(access: GroupMemberDep) -> GroupAccess:

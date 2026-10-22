@@ -64,6 +64,17 @@ async def upsert_person(session: SessionDep, *, subject: str, email: str, name: 
     return person
 
 
+def validate_claims(claims: dict[str, Any]) -> tuple[str, str, str]:
+    """`(sujet, e-mail, nom)` d'une identité acceptable. Une invitation se rattache à une personne par son
+    e-mail : un e-mail que le fournisseur n'a pas vérifié permettrait de se faire passer pour l'invité."""
+    subject, email = claims.get("sub"), claims.get("email")
+    if not subject or not email:
+        raise HTTPException(status_code=400, detail="Le fournisseur d'identité n'a pas renvoyé sub et email")
+    if claims.get("email_verified") is False:
+        raise HTTPException(status_code=403, detail="L'adresse e-mail n'est pas vérifiée par le fournisseur d'identité")
+    return str(subject), str(email).strip().lower(), str(claims.get("name", ""))
+
+
 @router.get("/login")
 async def login(request: Request) -> object:
     client = _client()
@@ -75,10 +86,8 @@ async def callback(request: Request, session: SessionDep) -> RedirectResponse:
     client = _client()
     token = await client.authorize_access_token(request)
     claims = token.get("userinfo") or {}
-    subject, email = claims.get("sub"), claims.get("email")
-    if not subject or not email:
-        raise HTTPException(status_code=400, detail="Le fournisseur d'identité n'a pas renvoyé sub et email")
-    person = await upsert_person(session, subject=subject, email=email, name=claims.get("name", ""))
+    subject, email, name = validate_claims(claims)
+    person = await upsert_person(session, subject=subject, email=email, name=name)
     response = RedirectResponse(get_settings().frontend_url)
     response.set_cookie(
         SESSION_COOKIE,

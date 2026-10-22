@@ -8,12 +8,12 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from harness.agents import service as agents
-from harness.auth.permissions import GroupAccess, HumanMemberDep, require_roles
+from harness.auth.permissions import GroupAccess, GroupSessionDep, HumanMemberDep, require_roles
 from harness.db.models.agents import Agent
 from harness.db.models.memory import GroupMemoryProposal, MemoryEntry, MemoryRevision, MemoryScope
-from harness.db.session import SessionDep
 from harness.memory import proposals
 from harness.memory import service as memory
 from harness.memory.service import Actor
@@ -86,7 +86,7 @@ def _forbidden(message: str) -> HTTPException:
     return HTTPException(403, {"code": "forbidden", "message": message})
 
 
-async def _authorize_edit(session: SessionDep, entry: MemoryEntry, access: GroupAccess) -> None:
+async def _authorize_edit(session: AsyncSession, entry: MemoryEntry, access: GroupAccess) -> None:
     """FR-016 : mémoire d'agent -> auteur de l'agent ou administrateur ; mémoire de groupe -> gestionnaire."""
     if entry.scope == MemoryScope.GROUP:
         if "group_memory_manager" not in access.roles:
@@ -97,7 +97,7 @@ async def _authorize_edit(session: SessionDep, entry: MemoryEntry, access: Group
         raise _forbidden("Réservé à l'auteur de l'agent ou aux administrateurs")
 
 
-async def _entry(session: SessionDep, entry_id: uuid.UUID) -> MemoryEntry:
+async def _entry(session: AsyncSession, entry_id: uuid.UUID) -> MemoryEntry:
     try:
         return await memory.get_entry(session, entry_id)
     except memory.MemoryEntryNotFound as exc:
@@ -105,7 +105,7 @@ async def _entry(session: SessionDep, entry_id: uuid.UUID) -> MemoryEntry:
 
 
 @router.get("/agents/{agent_id}/memory")
-async def agent_memory(agent_id: uuid.UUID, access: HumanMemberDep, session: SessionDep) -> list[dict[str, Any]]:
+async def agent_memory(agent_id: uuid.UUID, access: HumanMemberDep, session: GroupSessionDep) -> list[dict[str, Any]]:
     try:
         await agents.get_agent(session, agent_id)
     except agents.AgentNotFound as exc:
@@ -114,12 +114,12 @@ async def agent_memory(agent_id: uuid.UUID, access: HumanMemberDep, session: Ses
 
 
 @router.get("/group-memory")
-async def group_memory(access: HumanMemberDep, session: SessionDep) -> list[dict[str, Any]]:
+async def group_memory(access: HumanMemberDep, session: GroupSessionDep) -> list[dict[str, Any]]:
     return [entry_out(e) for e in await memory.list_entries(session, scope=MemoryScope.GROUP)]
 
 
 @router.post("/group-memory", status_code=201)
-async def add_group_entry(body: EntryInput, access: ManagerDep, session: SessionDep) -> dict[str, Any]:
+async def add_group_entry(body: EntryInput, access: ManagerDep, session: GroupSessionDep) -> dict[str, Any]:
     try:
         path = memory.normalize_path(body.path)
     except memory.MemoryPathInvalid as exc:
@@ -127,22 +127,28 @@ async def add_group_entry(body: EntryInput, access: ManagerDep, session: Session
     existing = await memory.find_entry(session, scope=MemoryScope.GROUP, agent_id=None, path=path)
     if existing is not None and existing.deleted_at is None:
         raise HTTPException(409, {"code": "conflict", "message": "Une entrée existe déjà à ce chemin : la modifier"})
-    outcome = await memory.write_entry(
-        session, group_id=access.group_id, scope=MemoryScope.GROUP, agent_id=None, path=path, content=body.content,
-        expected_version=None, actor=Actor("person", access.principal.id), source_run_id=None,
-    )
+    try:
+        outcome = await memory.write_entry(
+            session, group_id=access.group_id, scope=MemoryScope.GROUP, agent_id=None, path=path, content=body.content,
+            expected_version=None, actor=Actor("person", access.principal.id), source_run_id=None,
+        )
+    except memory.MemoryTooLarge as exc:
+        raise _invalid(exc) from exc
     return entry_out(outcome.entry)
 
 
 @router.put("/memory/{entry_id}")
-async def update_entry(entry_id: uuid.UUID, body: EntryUpdate, access: HumanMemberDep, session: SessionDep) -> Any:
+async def update_entry(entry_id: uuid.UUID, body: EntryUpdate, access: HumanMemberDep, session: GroupSessionDep) -> Any:
     entry = await _entry(session, entry_id)
     await _authorize_edit(session, entry, access)
-    outcome = await memory.write_entry(
-        session, group_id=access.group_id, scope=entry.scope, agent_id=entry.agent_id, path=entry.path,
-        content=body.content, expected_version=body.version, actor=Actor("person", access.principal.id),
-        source_run_id=entry.source_run_id,
-    )
+    try:
+        outcome = await memory.write_entry(
+            session, group_id=access.group_id, scope=entry.scope, agent_id=entry.agent_id, path=entry.path,
+            content=body.content, expected_version=body.version, actor=Actor("person", access.principal.id),
+            source_run_id=entry.source_run_id,
+        )
+    except memory.MemoryTooLarge as exc:
+        raise _invalid(exc) from exc
     if outcome.conflict:
         # Réponse (et non exception) : la transaction est validée et la tentative refusée reste dans
         # l'historique de l'entrée.
@@ -157,7 +163,7 @@ async def update_entry(entry_id: uuid.UUID, body: EntryUpdate, access: HumanMemb
 
 
 @router.delete("/memory/{entry_id}", status_code=204)
-async def delete_entry(entry_id: uuid.UUID, access: HumanMemberDep, session: SessionDep) -> Response:
+async def delete_entry(entry_id: uuid.UUID, access: HumanMemberDep, session: GroupSessionDep) -> Response:
     entry = await _entry(session, entry_id)
     await _authorize_edit(session, entry, access)
     await memory.delete_entry(session, entry, Actor("person", access.principal.id))
@@ -165,7 +171,7 @@ async def delete_entry(entry_id: uuid.UUID, access: HumanMemberDep, session: Ses
 
 
 @router.get("/memory/{entry_id}/revisions")
-async def revisions(entry_id: uuid.UUID, access: HumanMemberDep, session: SessionDep) -> list[dict[str, Any]]:
+async def revisions(entry_id: uuid.UUID, access: HumanMemberDep, session: GroupSessionDep) -> list[dict[str, Any]]:
     # l'historique reste lisible après une suppression, mais une entrée d'un autre groupe est introuvable
     try:
         await memory.get_entry(session, entry_id, include_deleted=True)
@@ -177,7 +183,7 @@ async def revisions(entry_id: uuid.UUID, access: HumanMemberDep, session: Sessio
 @router.get("/group-memory/proposals")
 async def list_proposals(
     access: HumanMemberDep,
-    session: SessionDep,
+    session: GroupSessionDep,
     status: Annotated[Literal["pending", "accepted", "rejected", "expired"] | None, Query()] = None,
 ) -> list[dict[str, Any]]:
     return [proposal_out(p) for p in await proposals.list_proposals(session, status)]
@@ -185,7 +191,7 @@ async def list_proposals(
 
 @router.post("/group-memory/proposals/{proposal_id}/decision")
 async def decide_proposal(
-    proposal_id: uuid.UUID, body: ProposalDecision, access: ManagerDep, session: SessionDep
+    proposal_id: uuid.UUID, body: ProposalDecision, access: ManagerDep, session: GroupSessionDep
 ) -> dict[str, Any]:
     try:
         proposal = await proposals.decide(session, access, proposal_id, body.decision)

@@ -250,12 +250,12 @@ qui lance mais ne peut pas approuver, révocation qui arrête ses exécutions, q
 
 **Purpose**: Improvements that affect multiple user stories
 
-- [ ] T124 [P] Implement the retention purge job in backend/src/harness/traces/retention.py deleting TraceEvents and memory revisions older than `Group.trace_retention_days`, with backend/tests/integration/test_retention.py written first
-- [ ] T125 [P] Write and pass backend/tests/integration/test_concurrency.py (SC-007, SC-002, SC-003): 20 concurrent runs in one group with FakeProvider, each step visible < 2 s and stop < 5 s in 99 % of cases
-- [ ] T126 [P] Create backend/evals/load_ollama.py measuring tokens/s and latency for N parallel generations against the target Ollama host, to size hardware or decide on vLLM (research R-10)
-- [ ] T127 [P] Write README.md at the repository root: purpose, architecture summary, local start with deploy/docker-compose.yml, test and eval commands, link to specs/001-agent-harness-platform/
-- [ ] T128 Run a security review of the whole diff (secrets in logs, RLS coverage on every group table, outbound calls limited to registered MCP servers and hook webhooks, no stdio MCP, no script execution), record findings in specs/001-agent-harness-platform/checklists/security-review.md and fix them with regression tests
-- [ ] T129 Run every scenario of specs/001-agent-harness-platform/quickstart.md (S1 to S6 and the memory eval) against deploy/docker-compose.yml and record results in specs/001-agent-harness-platform/checklists/quickstart-run.md
+- [X] T124 [P] Implement the retention purge job in backend/src/harness/traces/retention.py deleting TraceEvents and memory revisions older than `Group.trace_retention_days`, with backend/tests/integration/test_retention.py written first
+- [X] T125 [P] Write and pass backend/tests/integration/test_concurrency.py (SC-007, SC-002, SC-003): 20 concurrent runs in one group with FakeProvider, each step visible < 2 s and stop < 5 s in 99 % of cases
+- [X] T126 [P] Create backend/evals/load_ollama.py measuring tokens/s and latency for N parallel generations against the target Ollama host, to size hardware or decide on vLLM (research R-10)
+- [X] T127 [P] Write README.md at the repository root: purpose, architecture summary, local start with deploy/docker-compose.yml, test and eval commands, link to specs/001-agent-harness-platform/
+- [X] T128 Run a security review of the whole diff (secrets in logs, RLS coverage on every group table, outbound calls limited to registered MCP servers and hook webhooks, no stdio MCP, no script execution), record findings in specs/001-agent-harness-platform/checklists/security-review.md and fix them with regression tests
+- [X] T129 Run every scenario of specs/001-agent-harness-platform/quickstart.md (S1 to S6 and the memory eval) against deploy/docker-compose.yml and record results in specs/001-agent-harness-platform/checklists/quickstart-run.md
 
 ---
 

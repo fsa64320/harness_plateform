@@ -12,14 +12,15 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from harness.auth.permissions import GroupAccess, HumanMemberDep, require_roles
+from harness.auth.permissions import GroupAccess, GroupSessionDep, HumanMemberDep, require_roles
 from harness.catalog import mcp, skills
 from harness.catalog import service as catalog
 from harness.catalog.credentials import store_credential
 from harness.db.models.catalog import HookDefinition, Tool, ToolKind, ToolOperation
-from harness.db.session import SessionDep
 from harness.groups.audit import record_admin_action
+from harness.net_policy import OutboundBlocked, assert_outbound_allowed
 
 router = APIRouter(prefix="/groups/{group_id}/tools", tags=["tools"])
 
@@ -86,7 +87,7 @@ def hook_out(hook: HookDefinition) -> dict[str, Any]:
     return {k: v for k, v in out.items() if v is not None}  # le contrat ne prévoit pas de null
 
 
-async def tool_out(session: SessionDep, tool: Tool) -> dict[str, Any]:
+async def tool_out(session: AsyncSession, tool: Tool) -> dict[str, Any]:
     out: dict[str, Any] = {
         "id": str(tool.id),
         "kind": tool.kind,
@@ -108,7 +109,7 @@ async def tool_out(session: SessionDep, tool: Tool) -> dict[str, Any]:
 
 @router.get("")
 async def list_tools(
-    access: HumanMemberDep, session: SessionDep, kind: Annotated[ToolKind | None, Query()] = None
+    access: HumanMemberDep, session: GroupSessionDep, kind: Annotated[ToolKind | None, Query()] = None
 ) -> list[dict[str, Any]]:
     query = select(Tool).where(Tool.status == "active").order_by(Tool.name)
     if kind:
@@ -116,7 +117,7 @@ async def list_tools(
     return [await tool_out(session, t) for t in (await session.execute(query)).scalars()]
 
 
-async def _create_hook(session: SessionDep, access: GroupAccess, body: ToolCreate) -> Tool:
+async def _create_hook(session: AsyncSession, access: GroupAccess, body: ToolCreate) -> Tool:
     hook = body.hook
     if hook is None:
         raise _invalid("Le champ hook est requis pour un hook")
@@ -129,6 +130,10 @@ async def _create_hook(session: SessionDep, access: GroupAccess, body: ToolCreat
             raise _invalid("L'URL d'un hook webhook doit être en HTTPS, sans identifiants")
         if not hook.signing_secret:
             raise _invalid("Un hook webhook exige un secret de signature")
+        try:
+            await assert_outbound_allowed(hook.url or "")
+        except OutboundBlocked as exc:
+            raise _invalid(str(exc)) from exc
     existing = await session.execute(select(Tool.id).where(Tool.kind == ToolKind.HOOK, Tool.name == body.name))
     if existing.first() is not None:
         raise HTTPException(409, {"code": "conflict", "message": f"Un hook « {body.name} » existe déjà"})
@@ -177,7 +182,7 @@ async def _create_hook(session: SessionDep, access: GroupAccess, body: ToolCreat
 
 
 @router.post("", status_code=201)
-async def create_tool(body: ToolCreate, access: ToolManagerDep, session: SessionDep) -> dict[str, Any]:
+async def create_tool(body: ToolCreate, access: ToolManagerDep, session: GroupSessionDep) -> dict[str, Any]:
     try:
         if body.kind == ToolKind.MCP_SERVER:
             if body.mcp is None:
@@ -212,7 +217,7 @@ async def create_tool(body: ToolCreate, access: ToolManagerDep, session: Session
 
 
 @router.get("/{tool_id}")
-async def get_tool(tool_id: uuid.UUID, access: HumanMemberDep, session: SessionDep) -> dict[str, Any]:
+async def get_tool(tool_id: uuid.UUID, access: HumanMemberDep, session: GroupSessionDep) -> dict[str, Any]:
     try:
         return await tool_out(session, await catalog.get_tool(session, tool_id))
     except catalog.ToolNotFound as exc:
@@ -220,7 +225,7 @@ async def get_tool(tool_id: uuid.UUID, access: HumanMemberDep, session: SessionD
 
 
 @router.delete("/{tool_id}", status_code=204)
-async def retire_tool(tool_id: uuid.UUID, access: ToolManagerDep, session: SessionDep) -> Response:
+async def retire_tool(tool_id: uuid.UUID, access: ToolManagerDep, session: GroupSessionDep) -> Response:
     try:
         await catalog.retire_tool(session, group_id=access.group_id, actor_id=access.principal.id, tool_id=tool_id)
     except catalog.ToolNotFound as exc:
@@ -230,7 +235,7 @@ async def retire_tool(tool_id: uuid.UUID, access: ToolManagerDep, session: Sessi
 
 @router.put("/{tool_id}/operations/{operation_name}/classification")
 async def classify(
-    tool_id: uuid.UUID, operation_name: str, body: ClassificationInput, access: ToolManagerDep, session: SessionDep
+    tool_id: uuid.UUID, operation_name: str, body: ClassificationInput, access: ToolManagerDep, session: GroupSessionDep
 ) -> dict[str, Any]:
     try:
         operation = await mcp.classify_operation(

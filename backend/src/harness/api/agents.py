@@ -10,9 +10,8 @@ from fastapi import APIRouter, HTTPException, Request, Response
 
 from harness.agents import service
 from harness.agents.schemas import AgentInput
-from harness.auth.permissions import HumanMemberDep
+from harness.auth.permissions import GroupSessionDep, HumanMemberDep
 from harness.db.models.agents import Agent, agent_limits
-from harness.db.session import SessionDep
 
 router = APIRouter(prefix="/groups/{group_id}/agents", tags=["agents"])
 
@@ -42,13 +41,13 @@ def _errors(exc: Exception) -> HTTPException:
 
 
 @router.get("")
-async def list_agents(access: HumanMemberDep, session: SessionDep) -> list[dict[str, Any]]:
+async def list_agents(access: HumanMemberDep, session: GroupSessionDep) -> list[dict[str, Any]]:
     return [agent_out(a) for a in await service.list_agents(session)]
 
 
 @router.post("", status_code=201)
 async def create_agent(
-    body: AgentInput, request: Request, access: HumanMemberDep, session: SessionDep
+    body: AgentInput, request: Request, access: HumanMemberDep, session: GroupSessionDep
 ) -> dict[str, Any]:
     try:
         agent = await service.create_agent(session, access, request.app.state.model_provider, body)
@@ -58,7 +57,7 @@ async def create_agent(
 
 
 @router.get("/{agent_id}")
-async def get_agent(agent_id: uuid.UUID, access: HumanMemberDep, session: SessionDep) -> dict[str, Any]:
+async def get_agent(agent_id: uuid.UUID, access: HumanMemberDep, session: GroupSessionDep) -> dict[str, Any]:
     try:
         return agent_out(await service.get_agent(session, agent_id))
     except service.AgentNotFound as exc:
@@ -67,7 +66,7 @@ async def get_agent(agent_id: uuid.UUID, access: HumanMemberDep, session: Sessio
 
 @router.put("/{agent_id}")
 async def update_agent(
-    agent_id: uuid.UUID, body: AgentInput, request: Request, access: HumanMemberDep, session: SessionDep
+    agent_id: uuid.UUID, body: AgentInput, request: Request, access: HumanMemberDep, session: GroupSessionDep
 ) -> dict[str, Any]:
     try:
         agent = await service.update_agent(session, access, request.app.state.model_provider, agent_id, body)
@@ -77,7 +76,7 @@ async def update_agent(
 
 
 @router.delete("/{agent_id}", status_code=204)
-async def delete_agent(agent_id: uuid.UUID, access: HumanMemberDep, session: SessionDep) -> Response:
+async def delete_agent(agent_id: uuid.UUID, access: HumanMemberDep, session: GroupSessionDep) -> Response:
     try:
         await service.delete_agent(session, access, agent_id)
     except (service.AgentNotFound, service.AgentForbidden) as exc:
@@ -86,7 +85,7 @@ async def delete_agent(agent_id: uuid.UUID, access: HumanMemberDep, session: Ses
 
 
 @router.post("/{agent_id}/duplicate", status_code=201)
-async def duplicate_agent(agent_id: uuid.UUID, access: HumanMemberDep, session: SessionDep) -> dict[str, Any]:
+async def duplicate_agent(agent_id: uuid.UUID, access: HumanMemberDep, session: GroupSessionDep) -> dict[str, Any]:
     try:
         return agent_out(await service.duplicate_agent(session, access, agent_id))
     except service.AgentNotFound as exc:

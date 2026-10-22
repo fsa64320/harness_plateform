@@ -19,13 +19,13 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from deepagents.backends.utils import create_file_data
+from deepagents.backends.utils import create_file_data, file_data_to_string
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.checkpoint.memory import InMemorySaver
 
 from harness.memory.backends import build_backend
-from harness.runtime.builder import build_agent, make_run_context, memory_section
+from harness.runtime.builder import MemoryItem, build_agent, make_run_context, memory_section
 from harness.runtime.models import FakeProvider, ModelProvider, OllamaProvider, Step, say, tool_call
 from harness.traces.bus import TraceBus
 from harness.traces.memory import MemoryTraceStore
@@ -173,7 +173,15 @@ async def _run_task_once(
     ctx = make_run_context(snapshot, run_id=run_id, group_id=group_id, sink=sink)
     calls: list[str] = []
     backend = build_backend({"/memories/": store}) if store is not None else None  # type: ignore[dict-item]
-    section = memory_section(snapshot, sorted(p.lstrip("/") for p in store.files), []) if store is not None else None
+    section = (
+        memory_section(
+            snapshot,
+            [MemoryItem(p.lstrip("/"), file_data_to_string(d), 1) for p, d in sorted(store.files.items())],
+            [],
+        )
+        if store is not None
+        else None
+    )
     graph = build_agent(
         snapshot, provider, _tools(calls), checkpointer=InMemorySaver(), backend_factory=lambda _ctx: backend, ctx=ctx,
         system_sections=[section] if section else [],

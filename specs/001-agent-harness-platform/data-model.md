@@ -14,6 +14,8 @@ sont des tables métier comme les autres ; seuls les checkpoints LangGraph viven
 Personne authentifiée par le SSO.
 - `oidc_subject` (unique), `email`, `display_name`, `is_platform_admin` (bool)
 - Règle : `is_platform_admin` ne donne accès à aucun contenu de groupe (FR-022a).
+- `oidc_subject` reste vide tant qu'une personne invitée ne s'est pas connectée ; la première connexion
+  rattache le sujet à la personne portant le même e-mail (vérifié par le fournisseur d'identité).
 
 ### Group
 - `name` (unique), `status` : `active` | `disabled`
@@ -32,7 +34,9 @@ Appartenance d'une personne à un groupe (FR-022b).
 
 ### ServiceAccount
 Identité non humaine d'un groupe (FR-002a).
-- `group_id`, `name`, `token_hash`, `token_prefix` (affichage), `status` : `active` | `revoked`
+- `group_id`, `name`, `token_hash` (SHA-256 salé), `token_salt`, `token_prefix` (affichage),
+  `status` : `active` | `revoked`
+- Jeton : `hsa_` + id du compte + id du groupe + secret ; seul le secret authentifie.
 - `allowed_agent_ids` (liste), quotas identiques à `Membership`
 - Règles : jamais approbateur ; la révocation arrête ses exécutions et refuse tout lancement.
 
@@ -47,8 +51,8 @@ Journal des actions d'administration (FR-024).
 Élément du catalogue (FR-010).
 - `group_id`, `kind` : `mcp_server` | `skill` | `hook`, `name` (unique par groupe et type),
   `description`, `status` : `active` | `retired`, `created_by`
-- `mcp_server` : `url` (HTTPS, transport distant uniquement), `credential_id` (optionnel),
-  `last_check_at`, `last_check_ok`
+- `mcp_server` : `url` (HTTPS, transport distant uniquement, hôte public sauf autorisation explicite),
+  `credential_id` (optionnel), `last_check_at`, `last_check_ok`
 - `skill` : `skill_name`, `skill_description` (frontmatter), `files` (JSON chemin → contenu, servi
   en lecture seule par `SqlBackend`)
 - `hook` : voir `HookDefinition`
@@ -98,7 +102,8 @@ Exécution d'un agent (FR-002, FR-003).
   `launch_mode` : `manual` | `programmatic`
 - `status` et motif d'arrêt (`stop_reason`) : voir transitions
 - `thread_id` (LangGraph), `relaunched_from` (Run, optionnel)
-- Consommation : `iterations`, `input_tokens`, `output_tokens`, `cost`, `started_at`, `ended_at`
+- Consommation : `iterations`, `input_tokens`, `output_tokens`, `cost`, `started_at`, `ended_at` ;
+  `active_seconds` (temps actif cumulé, hors attente d'approbation) sert à la limite de durée
 - `result` (texte final, optionnel)
 
 **Transitions de `status`** :
@@ -128,12 +133,16 @@ Règle : `interrupted` est terminal ; seule une relance manuelle crée un nouvea
 
 ### ApprovalRequest
 Demande d'approbation (FR-005, FR-005b).
-- `group_id`, `run_id`, `tool_operation`, `arguments` (masqués), `requested_at`, `expires_at`
+- `group_id`, `run_id`, `call_id`, `tool_operation`, `arguments` (masqués), `requested_at`, `expires_at`
+- `interrupt_id`, `position` : un même arrêt du graphe peut porter plusieurs demandes ; la reprise attend
+  toutes les décisions, dans l'ordre de `position`
+- Une demande dont un hook « avant appel » bloque l'appel est refusée d'office (`rejected`, sans
+  `decided_by`) sans solliciter d'approbateur
 - `status` : `pending` → `approved` | `rejected` | `expired`
 - `no_eligible_approver` (bool) : vrai quand aucune personne habilitée n'existe (exécution d'un
   compte de service dans un groupe sans `approver`) ; la demande est alors visible en lecture
   par les administrateurs du groupe, qui sont avertis
-- `decided_by` (Person), `decided_at`
+- `decided_by` (Person), `decided_at`, `comment`
 - Règle d'autorisation : `decided_by` = déclencheur du run (s'il est une personne) **ou** membre
   ayant le rôle `approver` ; jamais un `ServiceAccount`.
 
@@ -149,7 +158,8 @@ Source de vérité de la mémoire, exposée à l'agent comme des fichiers par `S
 
 ### MemoryRevision
 Historique (FR-016).
-- `memory_entry_id`, `version`, `previous_content`, `changed_by`, `changed_at`,
+- `memory_entry_id`, `version`, `previous_content`, `new_content` (contenu écrit ; pour un conflit,
+  l'écriture refusée), `changed_by` (`person:<id>` ou `agent:<id>`), `changed_at`,
   `change_type` : `create` | `update` | `delete` | `conflict`
 
 ### GroupMemoryProposal

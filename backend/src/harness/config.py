@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     cookie_secure: bool = True
 
     ollama_base_url: str = "http://localhost:11434"
+    # Autorise les serveurs MCP et webhooks sur des adresses privées (développement, réseau interne assumé).
+    harness_allow_private_networks: bool = False
 
     global_max_concurrent_runs: int = 50
     approval_check_interval_seconds: int = 30

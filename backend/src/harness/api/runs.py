@@ -12,11 +12,12 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from harness.auth.permissions import GroupAccess, GroupMemberDep
+from harness.auth.permissions import GroupAccess, GroupMemberDep, GroupSessionDep
 from harness.db.models.runs import TERMINAL_STATUSES, Run, TraceEvent
-from harness.db.session import SessionDep, get_sessionmaker, group_context
+from harness.db.session import get_sessionmaker, group_context
 from harness.runtime import runner as runner_module
 from harness.traces.writer import TraceRecord
 
@@ -69,7 +70,7 @@ def _decode_cursor(cursor: str) -> tuple[dt.datetime, uuid.UUID]:
         raise HTTPException(422, {"code": "invalid", "message": "Curseur invalide"}) from exc
 
 
-async def _get_run(session: SessionDep, run_id: uuid.UUID, access: GroupAccess) -> Run:
+async def _get_run(session: AsyncSession, run_id: uuid.UUID, access: GroupAccess) -> Run:
     run = (await session.execute(select(Run).where(Run.id == run_id))).scalar_one_or_none()
     if run is None or (access.is_service_account and run.triggered_by_id != access.principal.id):
         raise HTTPException(404, "Exécution introuvable")
@@ -79,7 +80,7 @@ async def _get_run(session: SessionDep, run_id: uuid.UUID, access: GroupAccess) 
 @router.get("")
 async def list_runs(
     access: GroupMemberDep,
-    session: SessionDep,
+    session: GroupSessionDep,
     agent_id: Annotated[uuid.UUID | None, Query()] = None,
     triggered_by: Annotated[uuid.UUID | None, Query()] = None,
     status: Annotated[str | None, Query()] = None,
@@ -134,14 +135,19 @@ async def launch(body: RunCreate, request: Request, access: GroupMemberDep) -> d
 
 
 @router.get("/{run_id}")
-async def get_run(run_id: uuid.UUID, access: GroupMemberDep, session: SessionDep) -> dict[str, Any]:
+async def get_run(run_id: uuid.UUID, access: GroupMemberDep, session: GroupSessionDep) -> dict[str, Any]:
     return run_out(await _get_run(session, run_id, access))
 
 
 @router.post("/{run_id}/stop", status_code=202)
-async def stop_run(run_id: uuid.UUID, request: Request, access: GroupMemberDep, session: SessionDep) -> Response:
-    await _get_run(session, run_id, access)
-    await request.app.state.runner.stop(access.group_id, run_id)
+async def stop_run(run_id: uuid.UUID, request: Request, access: GroupMemberDep) -> Response:
+    # le lanceur vérifie l'existence (et, pour un compte de service, la propriété) dans sa propre transaction
+    try:
+        await request.app.state.runner.stop(
+            access.group_id, run_id, only_triggered_by=access.principal.id if access.is_service_account else None
+        )
+    except runner_module.RunNotFound as exc:
+        raise HTTPException(404, "Exécution introuvable") from exc
     return Response(status_code=202)
 
 
@@ -192,7 +198,7 @@ async def events(
     run_id: uuid.UUID,
     request: Request,
     access: GroupMemberDep,
-    session: SessionDep,
+    session: GroupSessionDep,
     after_seq: Annotated[int, Query(ge=0)] = 0,
     last_event_id: Annotated[str | None, Header()] = None,
     accept: Annotated[str, Header()] = "application/json",

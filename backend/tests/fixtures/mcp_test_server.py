@@ -25,7 +25,9 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 
-def _self_signed_cert(directory: Path, common_name: str = "localhost") -> tuple[Path, Path]:
+def _self_signed_cert(
+    directory: Path, common_name: str = "localhost", extra_dns: tuple[str, ...] = ()
+) -> tuple[Path, Path]:
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])  # DN distincts : OpenSSL confond deux CA de même nom
     now = dt.datetime.now(dt.UTC)
@@ -39,7 +41,11 @@ def _self_signed_cert(directory: Path, common_name: str = "localhost") -> tuple[
         .not_valid_after(now + dt.timedelta(days=1))
         .add_extension(
             x509.SubjectAlternativeName(
-                [x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
+                [
+                    x509.DNSName("localhost"),
+                    *(x509.DNSName(n) for n in extra_dns),
+                    x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
+                ]
             ),
             critical=False,
         )
@@ -67,11 +73,12 @@ def _free_port() -> int:
 class McpTestServer:
     """Serveur MCP HTTPS démarrable et arrêtable (pour simuler une panne en cours d'exécution)."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, host: str = "127.0.0.1", extra_dns: tuple[str, ...] = ()) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.received_headers: list[dict[str, str]] = []
+        self.host = host  # « 0.0.0.0 » pour être joignable depuis un conteneur
         self._dir = tempfile.TemporaryDirectory()
-        self.cert_path, self._key_path = _self_signed_cert(Path(self._dir.name))
+        self.cert_path, self._key_path = _self_signed_cert(Path(self._dir.name), extra_dns=extra_dns)
         self.port = _free_port()
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
@@ -126,7 +133,7 @@ class McpTestServer:
     def start(self) -> McpTestServer:
         config = uvicorn.Config(
             self._build_app(),
-            host="127.0.0.1",
+            host=self.host,
             port=self.port,
             ssl_certfile=str(self.cert_path),
             ssl_keyfile=str(self._key_path),

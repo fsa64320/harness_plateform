@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from harness.db.models.memory import ChangeType, MemoryEntry, MemoryRevision, MemoryScope
 
 MAX_PATH_LENGTH = 512
+MAX_CONTENT_BYTES = 256 * 1024  # une entrée de mémoire est une note, pas un entrepôt de fichiers
 
 
 class MemoryPathInvalid(ValueError):
@@ -22,6 +23,10 @@ class MemoryPathInvalid(ValueError):
 
 
 class MemoryEntryNotFound(Exception):
+    pass
+
+
+class MemoryTooLarge(ValueError):
     pass
 
 
@@ -105,6 +110,8 @@ async def write_entry(
     """Crée ou met à jour une entrée. `expected_version` (si fourni) est la version sur laquelle
     l'auteur a basé son changement ; un décalage produit un conflit au lieu d'écraser."""
     path = normalize_path(path)
+    if len(content.encode()) > MAX_CONTENT_BYTES:
+        raise MemoryTooLarge(f"Contenu trop volumineux (maximum {MAX_CONTENT_BYTES // 1024} Ko par entrée)")
     entry = await find_entry(session, scope=scope, agent_id=agent_id, path=path, lock=True)
     if entry is None:
         entry = MemoryEntry(

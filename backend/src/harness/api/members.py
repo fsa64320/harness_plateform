@@ -9,9 +9,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request,
 from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import select
 
-from harness.auth.permissions import GroupAccess, HumanMemberDep, require_roles
+from harness.auth.permissions import GroupAccess, GroupSessionDep, HumanMemberDep, require_roles
 from harness.db.models.identity import Group, Membership, Role
-from harness.db.session import SessionDep
 from harness.groups import service
 
 Email = Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")]
@@ -45,7 +44,7 @@ def membership_out(m: Membership, email: str, group_name: str) -> dict[str, Any]
     }
 
 
-async def _group_name(session: SessionDep, group_id: uuid.UUID) -> str:
+async def _group_name(session: GroupSessionDep, group_id: uuid.UUID) -> str:
     return (await session.execute(select(Group.name).where(Group.id == group_id))).scalar_one()
 
 
@@ -58,13 +57,13 @@ def _error(exc: service.GroupError) -> HTTPException:
 
 
 @router.get("")
-async def list_members(access: HumanMemberDep, session: SessionDep) -> list[dict[str, Any]]:
+async def list_members(access: HumanMemberDep, session: GroupSessionDep) -> list[dict[str, Any]]:
     name = await _group_name(session, access.group_id)
     return [membership_out(m, email, name) for m, email in await service.list_members(session)]
 
 
 @router.post("", status_code=201)
-async def invite(body: Invitation, access: AdminDep, session: SessionDep) -> dict[str, Any]:
+async def invite(body: Invitation, access: AdminDep, session: GroupSessionDep) -> dict[str, Any]:
     try:
         membership, email = await service.invite_member(session, access, email=body.email, roles=body.roles)
     except service.GroupError as exc:
@@ -73,7 +72,7 @@ async def invite(body: Invitation, access: AdminDep, session: SessionDep) -> dic
 
 
 @router.patch("/{membership_id}")
-async def update(membership_id: uuid.UUID, body: MembershipUpdate, access: AdminDep, session: SessionDep) -> dict[str, Any]:
+async def update(membership_id: uuid.UUID, body: MembershipUpdate, access: AdminDep, session: GroupSessionDep) -> dict[str, Any]:
     try:
         membership, email = await service.update_member(
             session, access, membership_id, body.model_dump(exclude_unset=True)
@@ -85,7 +84,7 @@ async def update(membership_id: uuid.UUID, body: MembershipUpdate, access: Admin
 
 @router.delete("/{membership_id}", status_code=204)
 async def remove(
-    membership_id: uuid.UUID, request: Request, background: BackgroundTasks, access: AdminDep, session: SessionDep
+    membership_id: uuid.UUID, request: Request, background: BackgroundTasks, access: AdminDep, session: GroupSessionDep
 ) -> Response:
     try:
         membership = await service.remove_member(session, access, membership_id)

@@ -348,11 +348,14 @@ class MemoryFileStore:
         except memory.MemoryPathInvalid as exc:
             return str(exc)
         expected = self._seen.get(key)
-        async with self._txn() as session:
-            outcome = await memory.write_entry(
-                session, group_id=self._group_id, scope=self._scope, agent_id=self._agent_id, path=key,
-                content=content, expected_version=expected, actor=self._actor, source_run_id=self._run_id,
-            )
+        try:
+            async with self._txn() as session:
+                outcome = await memory.write_entry(
+                    session, group_id=self._group_id, scope=self._scope, agent_id=self._agent_id, path=key,
+                    content=content, expected_version=expected, actor=self._actor, source_run_id=self._run_id,
+                )
+        except memory.MemoryTooLarge as exc:
+            return f"Erreur : {exc}"
         if outcome.conflict:
             return await self._conflict_message(key, outcome.expected_version or 0, outcome.actual_version or 0)
         self._seen[key] = self._versions[key] = outcome.entry.version

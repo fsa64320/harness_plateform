@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from harness.catalog.credentials import bearer_headers, store_credential
 from harness.db.models.catalog import Classification, Tool, ToolKind, ToolOperation, ToolStatus
 from harness.groups.audit import record_admin_action
+from harness.net_policy import OutboundBlocked, assert_outbound_allowed
 
 DISCOVERY_TIMEOUT_SECONDS = 10.0
 # Le nom du serveur préfixe le nom des outils vus par le modèle : il doit rester un identifiant sûr.
@@ -91,6 +92,10 @@ async def register_mcp_server(
     """Vérifie la joignabilité, enregistre le serveur et ses opérations (non classées). L'identifiant
     éventuel est chiffré au repos et ne sera plus jamais renvoyé (FR-014)."""
     validate_registration(name, url)
+    try:
+        await assert_outbound_allowed(url)
+    except OutboundBlocked as exc:
+        raise McpError(str(exc)) from exc
     existing = await session.execute(
         select(Tool.id).where(Tool.kind == ToolKind.MCP_SERVER, Tool.name == name)
     )
@@ -195,6 +200,11 @@ async def load_runtime_tools(
     tools: list[BaseTool] = []
     warnings: list[str] = []
     for name, tool_id in needed.items():
+        try:
+            await assert_outbound_allowed(urls[name])
+        except OutboundBlocked as exc:
+            warnings.append(f"Serveur MCP « {name} » ignoré : {exc}")
+            continue
         client = MultiServerMCPClient(
             {name: connection(urls[name], headers_by_tool.get(tool_id))},  # type: ignore[dict-item]
             tool_name_prefix=True,

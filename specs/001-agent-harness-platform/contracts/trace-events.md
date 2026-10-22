@@ -32,7 +32,7 @@ Route : `GET /api/v1/groups/{groupId}/runs/{runId}/events`
 | `type` | Payload (champs principaux) | Exigences |
 |---|---|---|
 | `run_started` | `agent_id`, `agent_snapshot_version`, `task`, `limits`, `triggered_by_type`, `launch_mode`, `relaunched_from`, `system_prompt` (prompt système effectif, après ajout par le framework des skills et de la mémoire chargée), `internal_tools` (liste effective, FR-006a) | FR-002, FR-006a, FR-007 |
-| `model_step` | `iteration`, `input_messages` (messages nouveaux depuis l'étape précédente : tâche, résultats d'outils, contenu de mémoire ou de skill injecté), `content` (texte de raisonnement ou de réponse), `input_tokens`, `output_tokens`, `duration_ms` | FR-007, constitution IV |
+| `model_step` | `iteration`, `input_messages` (messages nouveaux depuis l'étape précédente : tâche, réponses précédentes du modèle, résultats d'outils ; `{role, content, tool_calls?, tool_call_id?}`), `content` (texte de raisonnement ou de réponse), `tool_calls` (appels demandés), `input_tokens`, `output_tokens`, `duration_ms` ; `context_rewritten_from` si le framework a résumé ou purgé le contexte, `system_prompt` si le prompt système a changé | FR-007, constitution IV |
 | `tool_call_started` | `call_id`, `tool`, `operation`, `classification`, `arguments` | FR-007 |
 | `tool_call_finished` | `call_id`, `status` (`ok` / `error`), `result` (tronqué), `duration_ms`, `error` | FR-007, cas limite MCP injoignable |
 | `tool_call_refused` | `call_id`, `tool`, `reason` (`not_allowed` / `unknown_tool` / `cross_group`) | FR-006 |
@@ -40,7 +40,7 @@ Route : `GET /api/v1/groups/{groupId}/runs/{runId}/events`
 | `approval_requested` | `approval_id`, `call_id`, `operation`, `expires_at` | FR-005, FR-005b |
 | `approval_decided` | `approval_id`, `decision` (`approve` / `reject` / `expired`), `decided_by` | FR-005b |
 | `memory_read` | `scope` (`agent` / `group`), `path`, `version` | FR-015, FR-017b |
-| `memory_written` | `scope` (`agent`), `path`, `version`, `change_type` | FR-015, FR-016 |
+| `memory_written` | `scope` (`agent`), `path`, `version`, `change_type` (`create` / `update` / `delete`) | FR-015, FR-016 |
 | `memory_conflict` | `path`, `expected_version`, `actual_version` | cas limite écriture concurrente |
 | `group_memory_proposed` | `proposal_id`, `path` | FR-017a |
 | `subagent_started` / `subagent_finished` | `subagent`, `task` / `status` | FR-007 |
@@ -54,3 +54,7 @@ Route : `GET /api/v1/groups/{groupId}/runs/{runId}/events`
 - Une exécution `interrupted` (FR-003a) a toujours un `run_ended` écrit au redémarrage, avec
   `stop_reason = platform_restart`.
 - Aucun champ ne contient d'identifiant d'accès d'outil (FR-014, SC-005).
+- `run_started` est le premier événement, `run_ended` le dernier ; `hook_evaluated` pour un appel bloqué
+  avant approbation précède `approval_decided` (refus d'office, `decided_by` nul).
+- Les mémoires lues par un agent (`/memories/`, `/group-memory/`) et ses fichiers de skills arrivent comme
+  résultats d'outil `read_file` encadrés `<untrusted_tool_result>` (les skills : `<skill_file>`).

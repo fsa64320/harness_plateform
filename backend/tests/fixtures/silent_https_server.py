@@ -19,11 +19,16 @@ from tests.fixtures.mcp_test_server import _free_port, _self_signed_cert
 
 
 class WebhookTestServer:
-    def __init__(self, *, delay: float = 0.0, decision: str = "allow") -> None:
+    def __init__(
+        self, *, delay: float = 0.0, decision: str = "allow", host: str = "127.0.0.1", extra_dns: tuple[str, ...] = ()
+    ) -> None:
+        self.host = host
         self.delay, self.decision = delay, decision
         self.requests: list[dict[str, Any]] = []
         self._dir = tempfile.TemporaryDirectory()
-        self.cert_path, self._key_path = _self_signed_cert(Path(self._dir.name), common_name="harness-webhook-test")
+        self.cert_path, self._key_path = _self_signed_cert(
+            Path(self._dir.name), common_name="harness-webhook-test", extra_dns=extra_dns
+        )
         self.port = _free_port()
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
@@ -42,7 +47,7 @@ class WebhookTestServer:
 
     def start(self) -> WebhookTestServer:
         config = uvicorn.Config(
-            self._app(), host="127.0.0.1", port=self.port, ssl_certfile=str(self.cert_path),
+            self._app(), host=self.host, port=self.port, ssl_certfile=str(self.cert_path),
             ssl_keyfile=str(self._key_path), log_level="critical",
         )
         self._server = uvicorn.Server(config)

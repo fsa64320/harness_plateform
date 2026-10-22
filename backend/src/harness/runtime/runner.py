@@ -12,6 +12,7 @@ import contextlib
 import datetime as dt
 import hashlib
 import json
+import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from decimal import Decimal
@@ -37,19 +38,24 @@ from harness.memory import service as memory_service
 from harness.memory.backends import build_run_backend
 from harness.runtime import approvals
 from harness.runtime.builder import (
+    MemoryItem,
     allowed_skills,
     build_agent,
     compose_system_prompt,
     hooks_from_snapshot,
     make_run_context,
     memory_section,
+    select_memory,
 )
 from harness.runtime.context import RunContext
 from harness.runtime.models import ModelProvider
+from harness.traces import retention
 from harness.traces.redaction import redact
 from harness.traces.writer import RunEventSink, TraceWriter, message_text
 
 log = structlog.get_logger()
+
+PURGE_INTERVAL_SECONDS = 3600.0
 
 
 class RunnerError(Exception):
@@ -310,7 +316,7 @@ class Runner:
             secrets=await self._hook_secrets(group_id, snapshot),
             known_secrets=secrets,
         )
-        sections = await self._system_sections(group_id, snapshot)
+        sections, loaded_memory = await self._system_sections(group_id, snapshot)
         if resume is None:
             await sink.emit(
                 "run_started",
@@ -320,6 +326,8 @@ class Runner:
                     "internal_tools": list(ctx.internal_tools),
                 },
             )
+            for scope, item in loaded_memory:  # FR-017b : chaque entrée consultée, avec sa portée
+                await sink.emit("memory_read", {"scope": scope, "path": item.path, "version": item.version})
 
         outcome: tuple[str, str | None, str | None] | None = None
         graph = None
@@ -482,21 +490,25 @@ class Runner:
             )
         ]
 
-    async def _system_sections(self, group_id: uuid.UUID, snapshot: dict[str, Any]) -> list[str]:
-        """Index de la mémoire (chemins seulement) ajouté au prompt système."""
-        agent_paths: list[str] = []
-        group_paths: list[str] = []
+    async def _system_sections(
+        self, group_id: uuid.UUID, snapshot: dict[str, Any]
+    ) -> tuple[list[str], list[tuple[str, MemoryItem]]]:
+        """Section « Mémoire » du prompt (contenu chargé, encadré comme donnée) et entrées chargées."""
+        agent_items: list[MemoryItem] = []
+        group_items: list[MemoryItem] = []
         if snapshot.get("agent_memory_enabled") or snapshot.get("group_memory_enabled"):
             async with self._txn(group_id) as session:
                 if snapshot.get("agent_memory_enabled"):
                     entries = await memory_service.list_entries(
                         session, scope="agent", agent_id=uuid.UUID(snapshot["agent_id"])
                     )
-                    agent_paths = [e.path for e in entries]
+                    agent_items = [MemoryItem(e.path, e.content, e.version) for e in entries]
                 if snapshot.get("group_memory_enabled"):
-                    group_paths = [e.path for e in await memory_service.list_entries(session, scope="group")]
-        section = memory_section(snapshot, agent_paths, group_paths)
-        return [section] if section else []
+                    entries = await memory_service.list_entries(session, scope="group")
+                    group_items = [MemoryItem(e.path, e.content, e.version) for e in entries]
+        section = memory_section(snapshot, agent_items, group_items)
+        loaded = [("agent", i) for i in select_memory(agent_items)[0]] + [("group", i) for i in select_memory(group_items)[0]]
+        return ([section] if section else []), loaded
 
     @staticmethod
     def _retired_warnings(snapshot: dict[str, Any]) -> list[str]:
@@ -664,11 +676,13 @@ class Runner:
 
     # --- arrêt, fin, récupération ---------------------------------------------------------
 
-    async def stop(self, group_id: uuid.UUID, run_id: uuid.UUID) -> None:
+    async def stop(
+        self, group_id: uuid.UUID, run_id: uuid.UUID, *, only_triggered_by: uuid.UUID | None = None
+    ) -> None:
         """Demande l'arrêt : annule la tâche en cours (vérifié entre deux étapes au plus tard)."""
         async with self._txn(group_id) as session:
             run = await session.get(Run, run_id)
-            if run is None:
+            if run is None or (only_triggered_by is not None and run.triggered_by_id != only_triggered_by):
                 raise RunNotFound(str(run_id))
             status = run.status
         if status in TERMINAL_STATUSES:
@@ -781,6 +795,14 @@ class Runner:
                 if group is not None:
                     await proposals.expire_overdue(session, group)
 
+    async def purge_expired(self) -> None:
+        """Rétention des traces et de l'historique de mémoire, groupe par groupe."""
+        for group_id in await self._group_ids():
+            async with self._txn(group_id) as session:
+                group = await session.get(Group, group_id)
+                if group is not None:
+                    await retention.purge_group(session, group)
+
     # --- tâche périodique -----------------------------------------------------------------
 
     def start_background(self) -> None:
@@ -788,13 +810,17 @@ class Runner:
             self._background = asyncio.create_task(self._loop())
 
     async def _loop(self) -> None:
+        last_purge = 0.0
         while True:
             await asyncio.sleep(self._check_interval)
             try:
                 await self.expire_overdue_approvals()
                 await self.expire_overdue_proposals()
+                if time.monotonic() - last_purge >= PURGE_INTERVAL_SECONDS:
+                    last_purge = time.monotonic()
+                    await self.purge_expired()
             except Exception:
-                log.exception("expiry_failed")
+                log.exception("periodic_task_failed")
 
     async def shutdown(self) -> None:
         """Arrêt propre du processus : les exécutions en cours sont laissées en l'état (elles seront

@@ -36,8 +36,8 @@ async def test_a_duplicated_agent_starts_with_empty_agent_memory_and_keeps_group
     results = [e["payload"]["result"] for e in await world.events(run["id"]) if e["type"] == "tool_call_finished"]
     assert "secret de l'original" not in results[0]
     assert "commun" in results[1]
-    scopes = [e["payload"]["scope"] for e in await world.events(run["id"]) if e["type"] == "memory_read"]
-    assert scopes == ["group"]
+    scopes = {e["payload"]["scope"] for e in await world.events(run["id"]) if e["type"] == "memory_read"}
+    assert scopes == {"group"}  # jamais « agent » : la mémoire de l'original n'est pas partagée
 
     # l'original n'a rien perdu
     assert len(await entries_of(world.group_id, scope="agent", agent_id=uuid.UUID(original["id"]))) == 1

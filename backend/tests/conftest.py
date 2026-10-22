@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from harness.auth.permissions import Principal, current_principal
 from harness.db.models.identity import Person
-from harness.db.session import SessionDep
+from harness.db.session import get_sessionmaker
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 APP_ROLE = "harness_app"
@@ -35,6 +35,8 @@ TEST_ENCRYPTION_KEY = base64.b64encode(b"0123456789abcdef0123456789abcdef").deco
 os.environ.setdefault("HARNESS_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY)
 os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://placeholder")
 os.environ.setdefault("LANGSMITH_TRACING", "false")
+# les serveurs de test (MCP, webhooks) écoutent sur 127.0.0.1 ; les tests de la politique réseau la rétablissent
+os.environ.setdefault("HARNESS_ALLOW_PRIVATE_NETWORKS", "true")
 
 
 @pytest.fixture(scope="session")
@@ -122,24 +124,22 @@ async def session(migrated_db: dict[str, str], clean_db: None) -> AsyncIterator[
 
 def install_auth_override(app: FastAPI) -> None:
     """Remplace `current_principal` : l'identité vient de l'en-tête `X-Test-Person` (id de Person)."""
-    async def fake_principal(request: Request, session: SessionDep) -> Principal:
-        authorization = request.headers.get("authorization", "")
-        if authorization.lower().startswith("bearer "):  # jetons de comptes de service : vraie authentification
-            from harness.auth.service_accounts import authenticate_token
+    async def fake_principal(request: Request) -> Principal:
+        async with get_sessionmaker()() as session, session.begin():
+            authorization = request.headers.get("authorization", "")
+            if authorization.lower().startswith("bearer "):  # jetons de comptes de service : vraie authentification
+                from harness.auth.service_accounts import authenticate_token
 
-            return await authenticate_token(session, authorization[7:].strip())
-        raw = request.headers.get("x-test-person")
-        if not raw:
-            raise HTTPException(status_code=401, detail="unauthenticated")
-        person = await session.get(Person, uuid.UUID(raw))
-        if person is None:
-            raise HTTPException(status_code=401, detail="unauthenticated")
-        return Principal(
-            kind="person",
-            id=person.id,
-            email=person.email,
-            is_platform_admin=person.is_platform_admin,
-        )
+                return await authenticate_token(session, authorization[7:].strip())
+            raw = request.headers.get("x-test-person")
+            if not raw:
+                raise HTTPException(status_code=401, detail="unauthenticated")
+            person = await session.get(Person, uuid.UUID(raw))
+            if person is None:
+                raise HTTPException(status_code=401, detail="unauthenticated")
+            return Principal(
+                kind="person", id=person.id, email=person.email, is_platform_admin=person.is_platform_admin
+            )
 
     app.dependency_overrides[current_principal] = fake_principal
 
